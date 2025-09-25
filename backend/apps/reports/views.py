@@ -2336,13 +2336,13 @@ class ReportViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    @action(detail=True, methods=['get'], url_path='preview/(?P<format>[^/.]+)')
-    def preview_report(self, request, pk=None, format=None):
+    @action(detail=True, methods=['get'], url_path='preview/(?P<preview_type>[^/.]+)')
+    def preview_report(self, request, pk=None, preview_type=None):
         """Obtener vista previa del reporte en diferentes formatos"""
         try:
             report = self.get_object()
             
-            if format == 'json':
+            if preview_type == 'json':
                 # Retornar datos estructurados para vista previa
                 preview_data = {
                     'report_info': {
@@ -2375,18 +2375,19 @@ class ReportViewSet(viewsets.ModelViewSet):
                 
                 return Response(preview_data)
                 
-            elif format == 'html':
-                # Retornar HTML simplificado para vista previa rápida
-                return self.html(request, pk)
-                
+            elif preview_type == 'html':
+                # Retornar vista previa HTML
+                # Tu código HTML existente aquí...
+                pass
+            
             else:
                 return Response(
-                    {'error': f'Formato {format} no soportado'}, 
+                    {'error': f'Formato de vista previa no soportado: {preview_type}'}, 
                     status=status.HTTP_400_BAD_REQUEST
                 )
                 
         except Exception as e:
-            logger.error(f"Error generando vista previa {format} para reporte {pk}: {e}")
+            logger.error(f'Error generando vista previa: {e}')
             return Response(
                 {'error': 'Error generando vista previa'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

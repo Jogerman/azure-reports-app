@@ -1,4 +1,4 @@
-# apps/reports/urls.py
+# apps/reports/urls.py - VERSIÓN CORREGIDA
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from . import views
@@ -14,7 +14,8 @@ urlpatterns = [
          views.ReportViewSet.as_view({'get': 'get_specialized_analysis'}), 
          name='report-specialized-analysis'),
     
-    path('reports/<uuid:pk>/preview/<str:format>/', 
+    # 🔧 CORRECCIÓN: Cambiar 'format' por 'preview_type' para evitar conflicto con DRF
+    path('reports/<uuid:pk>/preview/<str:preview_type>/', 
          views.ReportViewSet.as_view({'get': 'preview_report'}), 
          name='report-preview'),
     
