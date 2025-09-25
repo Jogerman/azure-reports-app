@@ -282,6 +282,44 @@ CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'
+CELERY_ENABLE_UTC = True
+
+# Configuraciones específicas para Windows
+if sys.platform.startswith('win'):
+    print("🪟 Sistema Windows detectado - Aplicando configuraciones especiales para Celery")
+    
+    # Usar eventlet como pool para evitar errores de permisos
+    CELERY_WORKER_POOL = 'eventlet'
+    CELERY_WORKER_CONCURRENCY = 10
+    
+    # Configuraciones adicionales para Windows
+    CELERY_WORKER_HIJACK_ROOT_LOGGER = False
+    CELERY_WORKER_LOG_COLOR = False
+    
+    # Evitar problemas con procesos en Windows
+    CELERY_TASK_ALWAYS_EAGER = False  # Cambiar a True solo para debugging
+    CELERY_TASK_STORE_EAGER_RESULT = True
+    
+    # Configuración del broker para Windows
+    CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+    CELERY_BROKER_CONNECTION_MAX_RETRIES = 10
+    
+else:
+    # Configuración para Linux/Mac
+    CELERY_WORKER_POOL = 'prefork'
+    CELERY_WORKER_CONCURRENCY = 4
+
+# Configuración de tareas
+CELERY_TASK_ROUTES = {
+    'apps.reports.tasks.process_csv_file': {'queue': 'reports'},
+    'apps.reports.tasks.generate_report': {'queue': 'reports'},
+    'apps.reports.tasks.generate_specialized_report': {'queue': 'reports'},
+}
+
+# Logs de Celery
+CELERY_WORKER_LOG_FORMAT = '[%(asctime)s: %(levelname)s/%(processName)s] %(message)s'
+CELERY_WORKER_TASK_LOG_FORMAT = '[%(asctime)s: %(levelname)s/%(processName)s][%(task_name)s(%(task_id)s)] %(message)s'
 
 # Logging
 LOGGING = {

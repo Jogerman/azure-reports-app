@@ -102,148 +102,259 @@ class ReportViewSet(viewsets.ModelViewSet):
             })
     
     def create(self, request, *args, **kwargs):
-        """Crear y generar nuevo reporte"""
+        """Crear reporte con manejo robusto de Celery"""
         try:
             logger.info(f"Creando reporte para usuario: {request.user.email}")
             logger.info(f"Datos recibidos: {request.data}")
             
-            # Obtener datos del request
-            title = request.data.get('title', 'Reporte Automático')
-            description = request.data.get('description', '')
-            report_type = request.data.get('report_type', 'comprehensive')
-            csv_file_id = request.data.get('csv_file')
-            configuration = request.data.get('configuration', {})
+            # Validar datos requeridos
+            required_fields = ['title', 'report_type', 'csv_file']
+            missing_fields = [field for field in required_fields if field not in request.data]
             
-            # Validar CSV file
-            if not csv_file_id:
+            if missing_fields:
                 return Response(
-                    {'error': 'csv_file es requerido'}, 
+                    {'error': f'Campos requeridos faltantes: {", ".join(missing_fields)}'}, 
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Obtener archivo CSV
+            # Validar que el archivo CSV existe y pertenece al usuario
+            csv_file_id = request.data.get('csv_file')
             try:
+                from apps.storage.models import CSVFile
                 csv_file = CSVFile.objects.get(id=csv_file_id, user=request.user)
             except CSVFile.DoesNotExist:
                 return Response(
-                    {'error': 'Archivo CSV no encontrado'}, 
+                    {'error': 'Archivo CSV no encontrado o no pertenece al usuario'}, 
                     status=status.HTTP_404_NOT_FOUND
                 )
             
             # Crear el reporte
             report = Report.objects.create(
                 user=request.user,
-                title=title,
-                description=description,
-                report_type=report_type,
+                title=request.data['title'],
+                description=request.data.get('description', ''),
+                report_type=request.data['report_type'],
                 csv_file=csv_file,
-                status='pending'
+                status='pending',
+                configuration=request.data.get('configuration', {})
             )
             
             logger.info(f"Reporte creado: {report.id}")
             
-            # ✅ USAR EL SISTEMA DE TAREAS ASÍNCRONAS QUE YA TIENES:
+            # MANEJO ROBUSTO DE CELERY
+            celery_success = False
+            
             try:
-                # Importar las tareas que ya existen
-                from .tasks import generate_comprehensive_report, generate_specialized_report
+                # Verificar que Celery esté disponible
+                from celery import current_app
                 
-                if report_type == 'comprehensive':
-                    # Usar tarea asíncrona para reporte completo
-                    task = generate_comprehensive_report.delay(str(report.id))
-                    logger.info(f"Tarea asíncrona iniciada para reporte completo: {task.id}")
-                    
-                elif report_type in ['security', 'performance', 'cost']:
-                    # Usar tarea asíncrona para reporte especializado
-                    task = generate_specialized_report.delay(str(report.id))
-                    logger.info(f"Tarea asíncrona iniciada para reporte {report_type}: {task.id}")
-                    
-                else:
-                    # Fallback a reporte completo
-                    task = generate_comprehensive_report.delay(str(report.id))
-                    logger.info(f"Tarea asíncrona iniciada (fallback): {task.id}")
-                    
-                # Actualizar el reporte con el task_id
+                # Intentar obtener información de la aplicación de Celery
+                celery_app = current_app
+                
+                # Verificar que las tareas estén registradas
+                from apps.reports.tasks import generate_specialized_report
+                
+                # Verificar que la función tiene el atributo delay
+                if not hasattr(generate_specialized_report, 'delay'):
+                    raise AttributeError("La tarea no tiene el atributo 'delay' - Celery no está configurado correctamente")
+                
+                # Intentar enviar la tarea
+                task = generate_specialized_report.delay(str(report.id))
+                
+                # Si llegamos aquí, Celery está funcionando
                 report.celery_task_id = task.id
                 report.status = 'processing'
                 report.save(update_fields=['celery_task_id', 'status'])
                 
-            except ImportError:
-                logger.warning("Celery no disponible, generando sincrónicamente")
-                # Si Celery no está disponible, generar sincrónicamente
-                report.status = 'completed'
-                report.completed_at = timezone.now()
-                report.save()
+                celery_success = True
+                logger.info(f"Tarea Celery iniciada exitosamente: {task.id}")
+                
+            except ImportError as e:
+                logger.warning(f"Celery no está disponible: {e}")
+                
+            except AttributeError as e:
+                logger.error(f"Error de configuración de Celery: {e}")
+                logger.error("Posibles causas:")
+                logger.error("1. Celery worker no está ejecutándose")
+                logger.error("2. Las tareas no están registradas correctamente")
+                logger.error("3. Problemas con @shared_task decorator")
+                
+            except Exception as e:
+                logger.error(f"Error general con Celery: {e}")
+            
+            # Si Celery no está disponible, procesar sincrónicamente
+            if not celery_success:
+                logger.warning("Celery no disponible, procesando reporte sincrónicamente...")
+                
+                try:
+                    # Procesar reporte de forma síncrona
+                    result = self._process_report_synchronously(report)
+                    
+                    report.status = 'completed'
+                    report.completed_at = timezone.now()
+                    report.html_content = result.get('html_content', '')
+                    report.analysis_results = result.get('analysis_results', {})
+                    report.save(update_fields=['status', 'completed_at', 'html_content', 'analysis_results'])
+                    
+                    logger.info(f"Reporte procesado sincrónicamente: {report.id}")
+                    
+                except Exception as sync_error:
+                    logger.error(f"Error procesando sincrónicamente: {sync_error}")
+                    report.status = 'error'
+                    report.error_message = f"Error procesando: {str(sync_error)}"
+                    report.save(update_fields=['status', 'error_message'])
             
             # Serializar respuesta
             serializer = self.get_serializer(report)
             
-            logger.info(f"Reporte creado exitosamente: {report.id}")
             return Response(serializer.data, status=status.HTTP_201_CREATED)
             
         except Exception as e:
-            logger.error(f"Error creando reporte: {e}")
+            logger.error(f"Error crítico creando reporte: {e}")
             return Response(
-                {'error': f'Error creando reporte: {str(e)}'}, 
+                {'error': f'Error interno del servidor: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
+    def _process_report_synchronously(self, report):
+        """Procesar reporte de forma síncrona como fallback"""
+        try:
+            # Obtener datos del CSV
+            csv_data = self._get_csv_data(report.csv_file)
+            if csv_data is None:
+                raise ValueError("No se pudieron obtener datos del CSV")
+            
+            # Análisis básico
+            analysis_results = self._analyze_data(csv_data, report.report_type)
+            
+            # HTML básico
+            html_content = self._generate_basic_html(analysis_results, report)
+            
+            return {
+                'analysis_results': analysis_results,
+                'html_content': html_content
+            }
+            
+        except Exception as e:
+            logger.error(f"Error en procesamiento síncrono: {e}")
+            raise
+
+    def _analyze_data(self, df, report_type):
+        """Análisis básico de datos"""
+        try:
+            total_rows = len(df)
+            
+            # Análisis básico según tipo
+            if report_type == 'security':
+                security_data = df[df['Category'] == 'Security'] if 'Category' in df.columns else df
+                return {
+                    'total_actions': len(security_data),
+                    'analysis_type': 'security',
+                    'high_priority': len(security_data[security_data['Business Impact'] == 'High']) if 'Business Impact' in security_data.columns else 0
+                }
+            elif report_type == 'cost':
+                cost_data = df[df['Category'] == 'Cost'] if 'Category' in df.columns else df
+                estimated_savings = cost_data['Monthly Savings (USD)'].sum() if 'Monthly Savings (USD)' in cost_data.columns else 0
+                return {
+                    'total_actions': len(cost_data),
+                    'analysis_type': 'cost',
+                    'estimated_monthly_savings': float(estimated_savings)
+                }
+            else:
+                return {
+                    'total_actions': total_rows,
+                    'analysis_type': report_type,
+                    'categories': df['Category'].value_counts().to_dict() if 'Category' in df.columns else {}
+                }
+                
+        except Exception as e:
+            logger.error(f"Error en análisis: {e}")
+            return {'total_actions': 0, 'error': str(e)}
+    
+    def _generate_basic_html(self, analysis_results, report):
+        """Generar HTML básico"""
+        return f"""
+        <html>
+        <head>
+            <title>{report.title}</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                .header {{ background-color: #f0f0f0; padding: 20px; text-align: center; }}
+                .content {{ margin: 20px 0; }}
+                .metric {{ background-color: #e6f3ff; padding: 15px; margin: 10px 0; border-radius: 5px; }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1>{report.title}</h1>
+                <p>Tipo: {report.report_type.title()}</p>
+                <p>Generado: {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+            </div>
+            <div class="content">
+                <div class="metric">
+                    <h3>Total de Acciones</h3>
+                    <p><strong>{analysis_results.get('total_actions', 0)}</strong></p>
+                </div>
+                {f'<div class="metric"><h3>Ahorros Mensuales Estimados</h3><p><strong>${analysis_results.get("estimated_monthly_savings", 0):,.2f}</strong></p></div>' if 'estimated_monthly_savings' in analysis_results else ''}
+                {f'<div class="metric"><h3>Acciones de Alta Prioridad</h3><p><strong>{analysis_results.get("high_priority", 0)}</strong></p></div>' if 'high_priority' in analysis_results else ''}
+            </div>
+        </body>
+        </html>
+        """        
     @action(detail=True, methods=['get'])
     def status(self, request, pk=None):
-        """Obtener estado del reporte y progreso de la tarea"""
+        """Obtener estado del reporte con manejo robusto"""
         try:
             report = self.get_object()
             
             response_data = {
-                'id': report.id,
+                'id': str(report.id),
                 'status': report.status,
                 'title': report.title,
                 'report_type': report.report_type,
                 'created_at': report.created_at,
                 'completed_at': report.completed_at,
-                'progress': 0
+                'progress': 0,
+                'error_message': getattr(report, 'error_message', None)
             }
             
-            # Si hay tarea de Celery, obtener progreso
-            if hasattr(report, 'celery_task_id') and report.celery_task_id:
-                try:
-                    from celery.result import AsyncResult
-                    task = AsyncResult(report.celery_task_id)
-                    
-                    if task.state == 'PENDING':
-                        response_data['progress'] = 10
-                    elif task.state == 'PROGRESS':
-                        info = task.info or {}
-                        response_data['progress'] = info.get('current', 50)
-                    elif task.state == 'SUCCESS':
-                        response_data['progress'] = 100
-                        if report.status != 'completed':
-                            report.status = 'completed'
-                            report.completed_at = timezone.now()
-                            report.save()
-                    elif task.state == 'FAILURE':
-                        response_data['progress'] = 0
-                        response_data['error'] = str(task.info)
-                        if report.status != 'failed':
-                            report.status = 'failed'
-                            report.save()
-                            
-                except ImportError:
-                    pass
-            
-            # Si ya está completado, progreso 100%
+            # Determinar progreso basado en estado
             if report.status == 'completed':
                 response_data['progress'] = 100
             elif report.status == 'processing':
                 response_data['progress'] = 50
-            elif report.status == 'failed':
+                
+                # Si hay tarea de Celery, obtener progreso específico
+                if hasattr(report, 'celery_task_id') and report.celery_task_id:
+                    try:
+                        from celery.result import AsyncResult
+                        task = AsyncResult(report.celery_task_id)
+                        
+                        if task.state == 'PROGRESS':
+                            info = task.info or {}
+                            response_data['progress'] = info.get('current', 50)
+                            response_data['status_detail'] = info.get('status', 'Procesando...')
+                        elif task.state == 'SUCCESS':
+                            response_data['progress'] = 100
+                            if report.status != 'completed':
+                                report.status = 'completed'
+                                report.completed_at = timezone.now()
+                                report.save(update_fields=['status', 'completed_at'])
+                        elif task.state == 'FAILURE':
+                            response_data['status'] = 'error'
+                            response_data['error_message'] = str(task.info) if task.info else 'Error desconocido'
+                            
+                    except Exception as e:
+                        logger.warning(f"Error obteniendo estado de tarea Celery: {e}")
+                        
+            elif report.status == 'error':
                 response_data['progress'] = 0
                 
             return Response(response_data)
             
         except Exception as e:
-            logger.error(f"Error obteniendo estado: {e}")
+            logger.error(f"Error obteniendo estado del reporte: {e}")
             return Response(
-                {'error': 'Error obteniendo estado del reporte'}, 
+                {'error': f'Error obteniendo estado: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -2334,6 +2445,22 @@ class ReportViewSet(viewsets.ModelViewSet):
                 status=500,
                 content_type='text/html'
             )
+        
+    def _get_csv_data(self, csv_file):
+        """Obtener datos del CSV"""
+        try:
+            import pandas as pd
+            import os
+            
+            if csv_file.file_path and os.path.exists(csv_file.file_path):
+                return pd.read_csv(csv_file.file_path, encoding='utf-8-sig')
+            else:
+                logger.error("Archivo CSV no encontrado")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error leyendo CSV: {e}")
+            return None
         
     def _get_csv_dataframe(self, report) -> Optional[pd.DataFrame]:
         """Obtener DataFrame del CSV asociado al reporte"""

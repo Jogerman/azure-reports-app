@@ -13,9 +13,7 @@ from .utils.specialized_html_generators import get_specialized_html_generator
 logger = logging.getLogger(__name__)
 
 def convert_to_json_serializable(obj):
-    """
-    Convierte objetos numpy y pandas a tipos serializables en JSON
-    """
+    """Convierte objetos numpy y pandas a tipos serializables en JSON"""
     if isinstance(obj, dict):
         return {key: convert_to_json_serializable(value) for key, value in obj.items()}
     elif isinstance(obj, list):
@@ -30,16 +28,17 @@ def convert_to_json_serializable(obj):
         return None
     else:
         return obj
-
-@shared_task
-def process_csv_file(csv_file_id):
-    """Procesar archivo CSV con análisis real de Azure Advisor"""
+    
+@shared_task(bind=True)
+def process_csv_file(self, csv_file_id):
+    """Procesar archivo CSV con análisis real de Azure Advisor - VERSIÓN CORREGIDA"""
     csv_file = None
-    temp_file_path = None
     
     try:
-        from django.apps import apps
-        CSVFile = apps.get_model('reports', 'CSVFile')
+        # Actualizar progreso inicial
+        self.update_state(state='PROGRESS', meta={'current': 5, 'total': 100, 'status': 'Iniciando procesamiento...'})
+        
+        CSVFile = apps.get_model('storage', 'CSVFile')
         csv_file = CSVFile.objects.get(id=csv_file_id)
         
         logger.info(f"Iniciando procesamiento de CSV {csv_file_id}: {csv_file.original_filename}")
@@ -48,75 +47,29 @@ def process_csv_file(csv_file_id):
         csv_file.processing_status = 'processing'
         csv_file.save(update_fields=['processing_status'])
         
-        # Leer contenido del archivo
-        csv_content = None
-        if csv_file.azure_blob_url:
-            # Si está en Azure Storage
-            try:
-                from apps.storage.services.azure_storage_service import AzureStorageService
-                storage_service = AzureStorageService()
-                csv_content = storage_service.download_file_content(csv_file.azure_blob_name)
-                logger.info(f"Archivo descargado desde Azure Storage: {csv_file.azure_blob_name}")
-            except Exception as e:
-                logger.warning(f"Error descargando desde Azure Storage: {e}")
+        # Leer archivo CSV
+        self.update_state(state='PROGRESS', meta={'current': 20, 'total': 100, 'status': 'Leyendo archivo...'})
         
-        if not csv_content and csv_file.file_path:
-            # Leer desde archivo local
-            try:
-                with open(csv_file.file_path, 'r', encoding='utf-8-sig') as f:
-                    csv_content = f.read()
-                logger.info(f"Archivo leído desde path local: {csv_file.file_path}")
-            except Exception as e:
-                logger.warning(f"Error leyendo archivo local: {e}")
+        csv_data = read_csv_file(csv_file)
+        if csv_data is None:
+            raise ValueError("No se pudo leer el archivo CSV")
         
-        if not csv_content:
-            raise Exception("No se pudo obtener el contenido del archivo CSV")
+        # Procesar datos
+        self.update_state(state='PROGRESS', meta={'current': 50, 'total': 100, 'status': 'Analizando contenido...'})
         
-        # **USAR EL NUEVO ANALIZADOR REAL**
-        try:
-            from apps.reports.analyzers.csv_analyzer import analyze_csv_content
-            analysis_results = analyze_csv_content(csv_content)
-            logger.info("✅ Usando analizador real de Azure Advisor")
-        except ImportError:
-            logger.warning("⚠️  Analizador real no disponible, usando análisis básico")
-            # Análisis básico como fallback
-            import pandas as pd
-            from io import StringIO
-            
-            df = pd.read_csv(StringIO(csv_content))
-            analysis_results = {
-                'executive_summary': {
-                    'total_actions': len(df),
-                    'advisor_score': 65,  # Score por defecto
-                },
-                'cost_optimization': {
-                    'estimated_monthly_optimization': len(df) * 100,  # Estimación básica
-                },
-                'totals': {
-                    'total_actions': len(df),
-                    'total_monthly_savings': len(df) * 100,
-                    'total_working_hours': len(df) * 0.5,
-                    'azure_advisor_score': 65
-                },
-                'metadata': {
-                    'analysis_date': timezone.now().isoformat(),
-                    'csv_rows': len(df),
-                    'csv_columns': len(df.columns),
-                    'data_source': 'Basic CSV Analysis'
-                }
-            }
+        analysis_results = analyze_csv_content(csv_data)
         
-        # Guardar resultados
-        csv_file.rows_count = analysis_results.get('metadata', {}).get('csv_rows', 0)
-        csv_file.columns_count = analysis_results.get('metadata', {}).get('csv_columns', 0)
-        csv_file.analysis_data = analysis_results
+        # Actualizar archivo CSV con resultados
+        self.update_state(state='PROGRESS', meta={'current': 80, 'total': 100, 'status': 'Guardando resultados...'})
+        
+        csv_file.analysis_results = convert_to_json_serializable(analysis_results)
         csv_file.processing_status = 'completed'
-        csv_file.processed_date = timezone.now()
+        csv_file.rows_count = len(csv_data)
+        csv_file.columns_count = len(csv_data.columns)
+        csv_file.processed_at = timezone.now()
         csv_file.save()
         
-        logger.info(f"✅ CSV {csv_file_id} procesado exitosamente: {csv_file.rows_count} filas")
-        logger.info(f"📊 Acciones totales: {analysis_results.get('executive_summary', {}).get('total_actions', 0)}")
-        logger.info(f"💰 Ahorros estimados: ${analysis_results.get('cost_optimization', {}).get('estimated_monthly_optimization', 0):,}")
+        logger.info(f"CSV procesado exitosamente: {csv_file.rows_count} filas, {csv_file.columns_count} columnas")
         
         return f"Procesado exitosamente: {csv_file.rows_count} filas"
         
@@ -129,18 +82,15 @@ def process_csv_file(csv_file_id):
             csv_file.error_message = str(e)
             csv_file.save(update_fields=['processing_status', 'error_message'])
         
-        # Limpiar archivo temporal en caso de error
-        if temp_file_path and os.path.exists(temp_file_path):
-            try:
-                os.unlink(temp_file_path)
-            except Exception:
-                pass
-        # Guardar también el path del archivo para acceso posterior
-        if not csv_file.file_path and temp_file_path:
-            csv_file.file_path = temp_file_path
-            csv_file.save()
+        self.update_state(state='FAILURE', meta={
+            'current': 100,
+            'total': 100,
+            'status': f'Error: {str(e)}',
+            'error': str(e)
+        })
+        
+        raise
 
-        raise Exception(error_msg)
 @shared_task  
 def generate_report(report_id):
     """Generar reporte PDF de forma asíncrona - VERSIÓN ACTUALIZADA"""
@@ -222,145 +172,246 @@ def generate_comprehensive_report(report):
         report.save(update_fields=['status', 'error_message'])
         raise
     
-@shared_task
-def generate_specialized_report(report_id):
-    """Generar reporte especializado (security, performance, cost) de forma asíncrona"""
+@shared_task(bind=True)
+def generate_specialized_report(self, report_id):
+    """
+    Generar reporte especializado de forma asíncrona - VERSIÓN CORREGIDA
+    """
     report = None
     
     try:
+        # Actualizar progreso inicial
+        self.update_state(state='PROGRESS', meta={'current': 10, 'total': 100, 'status': 'Iniciando...'})
+        
+        # Obtener modelos
         Report = apps.get_model('reports', 'Report')
         report = Report.objects.get(id=report_id)
         
         logger.info(f"Iniciando generación de reporte especializado {report.id} tipo {report.report_type}")
         
-        # Actualizar estado
+        # Actualizar estado del reporte
         report.status = 'processing'
         report.save(update_fields=['status'])
         
-        # Validar que sea un tipo especializado
-        if report.report_type not in ['security', 'performance', 'cost']:
-            raise ValueError(f"Tipo de reporte no especializado: {report.report_type}")
+        # Actualizar progreso
+        self.update_state(state='PROGRESS', meta={'current': 20, 'total': 100, 'status': 'Procesando CSV...'})
         
         # Obtener datos del CSV
         csv_data = get_csv_dataframe_for_task(report)
-        if csv_data is None or csv_data.empty:
-            raise ValueError("No se pudieron obtener datos del CSV para el análisis")
+        if csv_data is None:
+            raise ValueError("No se pudieron obtener datos del CSV para el reporte")
         
-        logger.info(f"Datos CSV obtenidos: {len(csv_data)} filas para análisis {report.report_type}")
+        logger.info(f"CSV cargado: {len(csv_data)} filas")
         
-        # Ejecutar análisis especializado
-        analyzer = get_specialized_analyzer(report.report_type, csv_data)
-        analysis_data = analyzer.analyze()
+        # Actualizar progreso
+        self.update_state(state='PROGRESS', meta={'current': 40, 'total': 100, 'status': 'Analizando datos...'})
         
-        logger.info(f"Análisis {report.report_type} completado")
+        # Realizar análisis especializado basado en el tipo
+        analysis_results = perform_specialized_analysis(csv_data, report.report_type)
         
-        # Generar HTML
-        html_generator = get_specialized_html_generator(report.report_type, report, analysis_data)
-        html_content = html_generator.generate_html()
+        # Actualizar progreso
+        self.update_state(state='PROGRESS', meta={'current': 60, 'total': 100, 'status': 'Generando HTML...'})
         
-        logger.info(f"HTML especializado generado")
+        # Generar contenido HTML
+        html_content = generate_specialized_html(analysis_results, report)
+        
+        # Actualizar progreso
+        self.update_state(state='PROGRESS', meta={'current': 80, 'total': 100, 'status': 'Generando PDF...'})
         
         # Generar PDF
-        from apps.storage.services.pdf_generator_service import generate_report_pdf
-        pdf_bytes, pdf_filename = generate_report_pdf(report, html_content)
+        try:
+            from apps.storage.services.pdf_generator_service import generate_report_pdf
+            pdf_bytes, pdf_filename = generate_report_pdf(report, html_content)
+        except Exception as pdf_error:
+            logger.warning(f"Error generando PDF: {pdf_error}, continuando sin PDF")
+            pdf_bytes, pdf_filename = None, None
         
-        logger.info(f"PDF generado: {len(pdf_bytes)} bytes")
+        # Actualizar progreso
+        self.update_state(state='PROGRESS', meta={'current': 90, 'total': 100, 'status': 'Guardando resultado...'})
         
-        # Subir archivos a Azure Storage
-        pdf_url, html_url = upload_report_files_to_azure(
-            pdf_bytes, html_content, pdf_filename, report
-        )
+        # Actualizar el reporte con los resultados
+        report.html_content = html_content
+        report.analysis_results = convert_to_json_serializable(analysis_results)
         
-        # Actualizar reporte con resultados
-        report.analysis_results = {
-            f'{report.report_type}_analysis': analysis_data,
-            'generation_metadata': {
-                'generated_at': timezone.now().isoformat(),
-                'data_source': f'Specialized {report.report_type.title()} Analysis',
-                'records_analyzed': len(csv_data),
-                'analysis_type': report.report_type
-            }
-        }
-        report.pdf_url = pdf_url
-        report.html_url = html_url
-        report.pdf_blob_name = f"reports/{pdf_filename}"
-        report.html_blob_name = f"reports/{pdf_filename.replace('.pdf', '.html')}"
+        if pdf_bytes:
+            # Guardar PDF si se generó exitosamente
+            try:
+                from apps.storage.services.file_storage_service import save_report_pdf
+                pdf_url = save_report_pdf(report, pdf_bytes, pdf_filename)
+                report.pdf_url = pdf_url
+                report.pdf_blob_name = pdf_filename
+            except Exception as save_error:
+                logger.warning(f"Error guardando PDF: {save_error}")
+        
+        # Marcar como completado
         report.status = 'completed'
         report.completed_at = timezone.now()
-        report.save()
+        report.save(update_fields=['status', 'completed_at', 'html_content', 'analysis_results', 'pdf_url', 'pdf_blob_name'])
         
-        logger.info(f"✅ Reporte especializado {report.report_type} completado: {report.id}")
+        logger.info(f"Reporte especializado completado: {report.id}")
         
-        # Retornar resumen para logging
-        dashboard_metrics = analysis_data.get('dashboard_metrics', {})
+        # Actualizar progreso final
+        self.update_state(state='SUCCESS', meta={
+            'current': 100, 
+            'total': 100, 
+            'status': 'Completado',
+            'report_id': str(report.id),
+            'report_type': report.report_type
+        })
+        
         return {
             'report_id': str(report.id),
             'report_type': report.report_type,
             'status': 'completed',
-            'total_actions': dashboard_metrics.get('total_actions', 0),
-            'pdf_url': pdf_url,
-            'html_url': html_url
+            'total_actions': analysis_results.get('total_actions', 0),
+            'estimated_savings': analysis_results.get('estimated_monthly_savings', 0)
         }
         
     except Exception as e:
-        error_msg = f"Error generando reporte especializado {report_id}: {str(e)}"
-        logger.error(error_msg, exc_info=True)
+        logger.error(f"Error en generación de reporte especializado: {e}", exc_info=True)
         
+        # Actualizar estado de error
         if report:
-            report.status = 'failed'
+            report.status = 'error'
             report.error_message = str(e)
             report.save(update_fields=['status', 'error_message'])
         
-        raise Exception(error_msg)
+        # Actualizar progreso de error
+        self.update_state(state='FAILURE', meta={
+            'current': 100,
+            'total': 100,
+            'status': f'Error: {str(e)}',
+            'error': str(e)
+        })
+        
+        raise
+
+def perform_specialized_analysis(df, report_type):
+    """Realizar análisis especializado según el tipo de reporte"""
+    try:
+        if report_type == 'security':
+            return analyze_security_data(df)
+        elif report_type == 'performance':
+            return analyze_performance_data(df)
+        elif report_type == 'cost':
+            return analyze_cost_data(df)
+        else:
+            return analyze_comprehensive_data(df)
+    except Exception as e:
+        logger.error(f"Error en análisis especializado: {e}")
+        return {'error': str(e)}
+
+def analyze_security_data(df):
+    """Análizar datos de seguridad"""
+    security_data = df[df['Category'] == 'Security'] if 'Category' in df.columns else df
+    
+    return {
+        'total_actions': len(security_data),
+        'high_priority': len(security_data[security_data['Business Impact'] == 'High']) if 'Business Impact' in security_data.columns else 0,
+        'medium_priority': len(security_data[security_data['Business Impact'] == 'Medium']) if 'Business Impact' in security_data.columns else 0,
+        'security_categories': security_data.groupby('Resource Type').size().to_dict() if 'Resource Type' in security_data.columns else {},
+        'analysis_type': 'security'
+    }
+
+def analyze_performance_data(df):
+    """Analizar datos de rendimiento"""
+    performance_data = df[df['Category'] == 'Performance'] if 'Category' in df.columns else df
+    
+    return {
+        'total_actions': len(performance_data),
+        'high_impact': len(performance_data[performance_data['Business Impact'] == 'High']) if 'Business Impact' in performance_data.columns else 0,
+        'performance_categories': performance_data.groupby('Resource Type').size().to_dict() if 'Resource Type' in performance_data.columns else {},
+        'analysis_type': 'performance'
+    }
+
+def analyze_cost_data(df):
+    """Analizar datos de costos"""
+    cost_data = df[df['Category'] == 'Cost'] if 'Category' in df.columns else df
+    
+    # Calcular ahorros estimados si hay columnas de costos
+    estimated_savings = 0
+    if 'Monthly Savings (USD)' in cost_data.columns:
+        estimated_savings = cost_data['Monthly Savings (USD)'].sum()
+    
+    return {
+        'total_actions': len(cost_data),
+        'estimated_monthly_savings': estimated_savings,
+        'cost_categories': cost_data.groupby('Resource Type').size().to_dict() if 'Resource Type' in cost_data.columns else {},
+        'analysis_type': 'cost'
+    }
+
+
+def analyze_comprehensive_data(df):
+    """Análisis completo de todos los datos"""
+    return {
+        'total_actions': len(df),
+        'by_category': df.groupby('Category').size().to_dict() if 'Category' in df.columns else {},
+        'by_priority': df.groupby('Business Impact').size().to_dict() if 'Business Impact' in df.columns else {},
+        'estimated_monthly_savings': df['Monthly Savings (USD)'].sum() if 'Monthly Savings (USD)' in df.columns else 0,
+        'analysis_type': 'comprehensive'
+    }
+
+def analyze_csv_content(df):
+    """Análizar contenido general del CSV"""
+    return {
+        'total_rows': len(df),
+        'total_columns': len(df.columns),
+        'columns': list(df.columns),
+        'categories': df['Category'].value_counts().to_dict() if 'Category' in df.columns else {},
+        'business_impact': df['Business Impact'].value_counts().to_dict() if 'Business Impact' in df.columns else {}
+    }
+
+def generate_specialized_html(analysis_results, report):
+    """Generar HTML especializado"""
+    try:
+        # Usar los generadores existentes o crear HTML básico
+        from apps.reports.utils.specialized_html_generators import get_specialized_html_generator
+        generator = get_specialized_html_generator(report.report_type)
+        return generator.generate_html(analysis_results, report)
+    except ImportError:
+        # Fallback a HTML básico
+        return f"""
+        <html>
+        <head><title>{report.title}</title></head>
+        <body>
+            <h1>{report.title}</h1>
+            <p>Tipo de reporte: {report.report_type}</p>
+            <p>Total de acciones: {analysis_results.get('total_actions', 0)}</p>
+            <p>Generado: {timezone.now()}</p>
+        </body>
+        </html>
+        """
 
 def get_csv_dataframe_for_task(report):
-    """Obtener DataFrame del CSV para tareas asíncronas"""
+    """Obtener DataFrame del CSV asociado al reporte"""
     try:
         if not report.csv_file:
-            logger.warning("No hay archivo CSV asociado al reporte")
             return None
         
-        csv_file = report.csv_file
-        
-        # Método 1: Desde Azure Blob Storage
-        if csv_file.azure_blob_url and csv_file.azure_blob_name:
-            try:
-                from apps.storage.services.azure_storage_service import AzureStorageService
-                storage_service = AzureStorageService()
-                csv_content = storage_service.download_file_content(csv_file.azure_blob_name)
-                
-                # Crear archivo temporal
-                import tempfile
-                import os
-                
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as temp_file:
-                    temp_file.write(csv_content)
-                    temp_path = temp_file.name
-                
-                # Leer CSV
-                df = pd.read_csv(temp_path)
-                
-                # Limpiar archivo temporal
-                os.unlink(temp_path)
-                
-                logger.info(f"CSV leído desde Azure Storage: {len(df)} filas")
-                return df
-                
-            except Exception as e:
-                logger.warning(f"Error leyendo desde Azure Storage: {e}")
-        
-        # Método 2: Desde analysis_data si está disponible
-        if csv_file.analysis_data:
-            try:
-                # Intentar reconstruir DataFrame desde los datos de análisis
-                return reconstruct_dataframe_from_analysis(csv_file.analysis_data)
-            except Exception as e:
-                logger.warning(f"Error reconstruyendo DataFrame: {e}")
-        
-        return None
-        
+        return read_csv_file(report.csv_file)
     except Exception as e:
-        logger.error(f"Error obteniendo DataFrame para tarea: {e}")
+        logger.error(f"Error obteniendo DataFrame: {e}")
+        return None
+    
+def read_csv_file(csv_file):
+    """Leer archivo CSV y retornar DataFrame"""
+    try:
+        # Leer desde archivo local o Azure Storage
+        if csv_file.file_path and os.path.exists(csv_file.file_path):
+            return pd.read_csv(csv_file.file_path, encoding='utf-8-sig')
+        elif csv_file.azure_blob_url:
+            # Implementar lectura desde Azure Storage
+            from apps.storage.services.azure_storage_service import AzureStorageService
+            storage_service = AzureStorageService()
+            content = storage_service.download_file_content(csv_file.azure_blob_name)
+            from io import StringIO
+            return pd.read_csv(StringIO(content), encoding='utf-8-sig')
+        else:
+            logger.error("No se encontró ruta del archivo CSV")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error leyendo CSV: {e}")
         return None
 
 def reconstruct_dataframe_from_analysis(analysis_data):
