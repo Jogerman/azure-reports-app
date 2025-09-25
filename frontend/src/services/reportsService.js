@@ -194,7 +194,7 @@ class ReportsService {
       });
 
       // Enviar request
-      xhr.open('POST', `${this.baseURL}/storage/files/`);
+      xhr.open('POST', `${this.baseURL}/files/`);
       
       const token = localStorage.getItem('token');
       if (token) {
@@ -207,7 +207,7 @@ class ReportsService {
 
   // Obtener archivos CSV del usuario
   async getUserCSVFiles() {
-    const response = await fetch(`${this.baseURL}/storage/files/`, {
+    const response = await fetch(`${this.baseURL}/files/`, {
       method: 'GET',
       headers: this.getHeaders()
     });
@@ -217,7 +217,7 @@ class ReportsService {
 
   // Obtener análisis de un archivo CSV específico
   async getCSVFileAnalysis(csvFileId) {
-    const response = await fetch(`${this.baseURL}/storage/files/${csvFileId}/analysis/`, {
+    const response = await fetch(`${this.baseURL}/files/${csvFileId}/analysis/`, {
       method: 'GET',
       headers: this.getHeaders()
     });

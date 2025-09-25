@@ -88,7 +88,7 @@ const Reports = () => {
         setIsUploading(false);
       };
 
-      xhr.open('POST', '/api/storage/files/');
+      xhr.open('POST', '/api/files/upload/');
       xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('token')}`);
       xhr.send(formData);
 
