@@ -42,6 +42,8 @@ const Reports = () => {
       if (response.ok) {
         const data = await response.json();
         setReports(data.results || []);
+      } else {
+        console.error('Error fetching reports:', response.status);
       }
     } catch (error) {
       console.error('Error fetching reports:', error);
@@ -109,106 +111,150 @@ const Reports = () => {
   };
 
   const handleGenerateReport = async (config) => {
-    if (!csvFile) return;
+  if (!csvFile) return;
 
-    setIsGenerating(true);
-    setGenerationProgress(0);
-    setCurrentStep(3);
+  setIsGenerating(true);
+  setGenerationProgress(0);
+  setCurrentStep(3);
 
-    // Simular progreso de generación
-    const progressInterval = setInterval(() => {
-      setGenerationProgress(prev => {
-        if (prev >= 90) return prev;
-        return prev + Math.random() * 10;
-      });
-    }, 500);
+  // Simular progreso inicial
+  const progressInterval = setInterval(() => {
+    setGenerationProgress(prev => {
+      if (prev >= 90) return prev;
+      return prev + Math.random() * 10;
+    });
+  }, 500);
 
+  try {
+    // ✅ USAR LA URL CORRECTA Y DATOS CORRECTOS:
+    const response = await fetch('http://localhost:8000/api/reports/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${localStorage.getItem('access_token')}` // ✅ access_token
+      },
+      body: JSON.stringify({
+        title: config.title,
+        description: config.description,
+        report_type: config.type,
+        csv_file: csvFile.id, // ✅ Este es el ID correcto del CSV
+        configuration: {
+          include_graphics: config.includeGraphics,
+          include_detailed_tables: config.includeDetailedTables,
+          include_recommendations: config.includeRecommendations
+        }
+      })
+    });
+
+    if (response.ok) {
+      const newReport = await response.json();
+      console.log('✅ Reporte creado:', newReport);
+      
+      // ✅ INICIAR POLLING DEL ESTADO:
+      pollReportStatus(newReport.id, progressInterval);
+      
+    } else {
+      const errorData = await response.json();
+      console.error('❌ Error creando reporte:', errorData);
+      throw new Error(errorData.error || 'Error creating report');
+    }
+
+  } catch (error) {
+    console.error('Error generating report:', error);
+    clearInterval(progressInterval);
+    setIsGenerating(false);
+    // ✅ Mostrar error al usuario
+    alert(`Error generando reporte: ${error.message}`);
+  }
+};
+
+  const pollReportStatus = async (reportId, progressInterval) => {
+  const maxAttempts = 120; // 10 minutos máximo (120 * 5 segundos)
+  let attempts = 0;
+
+  const checkStatus = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/reports/', {
-        method: 'POST',
+      // ✅ USAR LA URL CORRECTA PARA STATUS:
+      const response = await fetch(`http://localhost:8000/api/reports/${reportId}/status/`, {
         headers: {
-          'Content-Type': 'application/json',
           'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-        },
-        body: JSON.stringify({
-          title: config.title,
-          description: config.description,
-          report_type: config.type,
-          csv_file: csvFile.id,
-          configuration: {
-            include_graphics: config.includeGraphics,
-            include_detailed_tables: config.includeDetailedTables,
-            include_recommendations: config.includeRecommendations
-          }
-        })
+        }
       });
 
       if (response.ok) {
-        const newReport = await response.json();
+        const statusData = await response.json();
+        console.log('📊 Estado del reporte:', statusData);
         
-        // Polling para verificar el estado del reporte
-        pollReportStatus(newReport.id, progressInterval);
+        // ✅ ACTUALIZAR PROGRESO REAL:
+        if (statusData.progress) {
+          setGenerationProgress(statusData.progress);
+        }
         
-      } else {
-        throw new Error('Error creating report');
-      }
-
-    } catch (error) {
-      console.error('Error generating report:', error);
-      clearInterval(progressInterval);
-      setIsGenerating(false);
-    }
-  };
-
-  const pollReportStatus = async (reportId, progressInterval) => {
-    const maxAttempts = 60; // 5 minutos máximo
-    let attempts = 0;
-
-    const checkStatus = async () => {
-      try {
-        const response = await fetch(`/api/reports/${reportId}/`, {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-          }
-        });
-
-        if (response.ok) {
-          const report = await response.json();
+        if (statusData.status === 'completed') {
+          clearInterval(progressInterval);
+          setGenerationProgress(100);
           
-          if (report.status === 'completed') {
+          // ✅ OBTENER EL REPORTE COMPLETO:
+          const reportResponse = await fetch(`http://localhost:8000/api/reports/${reportId}/`, {
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+            }
+          });
+          
+          if (reportResponse.ok) {
+            const completedReport = await reportResponse.json();
+            setGeneratedReport(completedReport);
+          }
+          
+          setIsGenerating(false);
+          fetchReports(); // Actualizar lista
+          
+        } else if (statusData.status === 'failed') {
+          clearInterval(progressInterval);
+          setIsGenerating(false);
+          alert(`Error: ${statusData.error || 'El reporte falló'}`);
+          
+        } else if (statusData.status === 'processing') {
+          // Continuar polling
+          attempts++;
+          if (attempts >= maxAttempts) {
             clearInterval(progressInterval);
-            setGenerationProgress(100);
-            setGeneratedReport(report);
             setIsGenerating(false);
-            fetchReports(); // Actualizar lista
-            
-          } else if (report.status === 'failed') {
-            clearInterval(progressInterval);
-            setIsGenerating(false);
-            console.error('Report generation failed:', report.error_message);
-            
-          } else if (attempts < maxAttempts) {
-            // Continuar polling
-            attempts++;
-            setTimeout(checkStatus, 5000); // Check every 5 seconds
-            
+            alert('Timeout: El reporte está tomando mucho tiempo');
           } else {
-            // Timeout
-            clearInterval(progressInterval);
-            setIsGenerating(false);
+            // Continuar polling cada 5 segundos
+            setTimeout(checkStatus, 5000);
           }
         }
         
-      } catch (error) {
-        console.error('Error checking report status:', error);
+      } else {
+        console.error('Error obteniendo estado:', response.status);
+        attempts++;
+        if (attempts >= maxAttempts) {
+          clearInterval(progressInterval);
+          setIsGenerating(false);
+          alert('Error obteniendo estado del reporte');
+        } else {
+          setTimeout(checkStatus, 5000);
+        }
+      }
+      
+    } catch (error) {
+      console.error('Error en polling:', error);
+      attempts++;
+      if (attempts >= maxAttempts) {
         clearInterval(progressInterval);
         setIsGenerating(false);
+        alert('Error de conexión al verificar estado');
+      } else {
+        setTimeout(checkStatus, 5000);
       }
-    };
-
-    // Iniciar primera verificación después de 3 segundos
-    setTimeout(checkStatus, 3000);
+    }
   };
+
+  // Iniciar el primer check después de 2 segundos
+  setTimeout(checkStatus, 2000);
+};
 
   const handleReset = () => {
     setCsvFile(null);

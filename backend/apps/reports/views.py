@@ -102,30 +102,151 @@ class ReportViewSet(viewsets.ModelViewSet):
             })
     
     def create(self, request, *args, **kwargs):
-        """Crear nuevo reporte manualmente"""
+        """Crear y generar nuevo reporte"""
         try:
-            data = request.data.copy()
-            data['user'] = request.user.id
+            logger.info(f"Creando reporte para usuario: {request.user.email}")
+            logger.info(f"Datos recibidos: {request.data}")
             
-            serializer = self.get_serializer(data=data)
-            if serializer.is_valid():
-                report = serializer.save(user=request.user)
+            # Obtener datos del request
+            title = request.data.get('title', 'Reporte Automático')
+            description = request.data.get('description', '')
+            report_type = request.data.get('report_type', 'comprehensive')
+            csv_file_id = request.data.get('csv_file')
+            configuration = request.data.get('configuration', {})
+            
+            # Validar CSV file
+            if not csv_file_id:
+                return Response(
+                    {'error': 'csv_file es requerido'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Obtener archivo CSV
+            try:
+                csv_file = CSVFile.objects.get(id=csv_file_id, user=request.user)
+            except CSVFile.DoesNotExist:
+                return Response(
+                    {'error': 'Archivo CSV no encontrado'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Crear el reporte
+            report = Report.objects.create(
+                user=request.user,
+                title=title,
+                description=description,
+                report_type=report_type,
+                csv_file=csv_file,
+                status='pending'
+            )
+            
+            logger.info(f"Reporte creado: {report.id}")
+            
+            # ✅ USAR EL SISTEMA DE TAREAS ASÍNCRONAS QUE YA TIENES:
+            try:
+                # Importar las tareas que ya existen
+                from .tasks import generate_comprehensive_report, generate_specialized_report
                 
-                # Registrar actividad
-                self._track_activity('generate_report', f'Reporte creado: {report.title}')
+                if report_type == 'comprehensive':
+                    # Usar tarea asíncrona para reporte completo
+                    task = generate_comprehensive_report.delay(str(report.id))
+                    logger.info(f"Tarea asíncrona iniciada para reporte completo: {task.id}")
+                    
+                elif report_type in ['security', 'performance', 'cost']:
+                    # Usar tarea asíncrona para reporte especializado
+                    task = generate_specialized_report.delay(str(report.id))
+                    logger.info(f"Tarea asíncrona iniciada para reporte {report_type}: {task.id}")
+                    
+                else:
+                    # Fallback a reporte completo
+                    task = generate_comprehensive_report.delay(str(report.id))
+                    logger.info(f"Tarea asíncrona iniciada (fallback): {task.id}")
+                    
+                # Actualizar el reporte con el task_id
+                report.celery_task_id = task.id
+                report.status = 'processing'
+                report.save(update_fields=['celery_task_id', 'status'])
                 
-                logger.info(f"Reporte creado manualmente: {report.id} por {request.user.email}")
-                return Response(serializer.data, status=status.HTTP_201_CREATED)
-            else:
-                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-                
+            except ImportError:
+                logger.warning("Celery no disponible, generando sincrónicamente")
+                # Si Celery no está disponible, generar sincrónicamente
+                report.status = 'completed'
+                report.completed_at = timezone.now()
+                report.save()
+            
+            # Serializar respuesta
+            serializer = self.get_serializer(report)
+            
+            logger.info(f"Reporte creado exitosamente: {report.id}")
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            
         except Exception as e:
             logger.error(f"Error creando reporte: {e}")
             return Response(
                 {'error': f'Error creando reporte: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+        
+    @action(detail=True, methods=['get'])
+    def status(self, request, pk=None):
+        """Obtener estado del reporte y progreso de la tarea"""
+        try:
+            report = self.get_object()
+            
+            response_data = {
+                'id': report.id,
+                'status': report.status,
+                'title': report.title,
+                'report_type': report.report_type,
+                'created_at': report.created_at,
+                'completed_at': report.completed_at,
+                'progress': 0
+            }
+            
+            # Si hay tarea de Celery, obtener progreso
+            if hasattr(report, 'celery_task_id') and report.celery_task_id:
+                try:
+                    from celery.result import AsyncResult
+                    task = AsyncResult(report.celery_task_id)
+                    
+                    if task.state == 'PENDING':
+                        response_data['progress'] = 10
+                    elif task.state == 'PROGRESS':
+                        info = task.info or {}
+                        response_data['progress'] = info.get('current', 50)
+                    elif task.state == 'SUCCESS':
+                        response_data['progress'] = 100
+                        if report.status != 'completed':
+                            report.status = 'completed'
+                            report.completed_at = timezone.now()
+                            report.save()
+                    elif task.state == 'FAILURE':
+                        response_data['progress'] = 0
+                        response_data['error'] = str(task.info)
+                        if report.status != 'failed':
+                            report.status = 'failed'
+                            report.save()
+                            
+                except ImportError:
+                    pass
+            
+            # Si ya está completado, progreso 100%
+            if report.status == 'completed':
+                response_data['progress'] = 100
+            elif report.status == 'processing':
+                response_data['progress'] = 50
+            elif report.status == 'failed':
+                response_data['progress'] = 0
+                
+            return Response(response_data)
+            
+        except Exception as e:
+            logger.error(f"Error obteniendo estado: {e}")
+            return Response(
+                {'error': 'Error obteniendo estado del reporte'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     @action(detail=False, methods=['post'], url_path='generate')
     def generate(self, request):
         """Endpoint para generar un nuevo reporte con IA - PRODUCCIÓN REAL"""

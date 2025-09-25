@@ -8,6 +8,11 @@ router.register(r'reports', views.ReportViewSet, basename='reports')
 
 urlpatterns = [
     path('', include(router.urls)),
+
+    # ✅ AGREGAR ESTE ENDPOINT ESPECÍFICO PARA GENERAR REPORTES
+    path('reports/generate/', 
+         views.ReportViewSet.as_view({'post': 'generate_report'}), 
+         name='generate-report'),
     
     # Endpoints especializados adicionales
     path('reports/<uuid:pk>/analysis/<str:analysis_type>/', 
