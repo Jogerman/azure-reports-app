@@ -33,9 +33,9 @@ const Reports = () => {
 
   const fetchReports = async () => {
     try {
-      const response = await fetch('/api/reports/', {
+      const response = await fetch('http://localhost:8000/api/reports/', {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
         }
       });
       
@@ -89,7 +89,7 @@ const Reports = () => {
       };
 
       xhr.open('POST', '/api/files/upload/');
-      xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('token')}`);
+      xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('access_token')}`);
       xhr.send(formData);
 
     } catch (error) {
@@ -124,11 +124,11 @@ const Reports = () => {
     }, 500);
 
     try {
-      const response = await fetch('/api/reports/', {
+      const response = await fetch('http://localhost:8000/api/reports/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
         },
         body: JSON.stringify({
           title: config.title,
@@ -168,7 +168,7 @@ const Reports = () => {
       try {
         const response = await fetch(`/api/reports/${reportId}/`, {
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
+            'Authorization': `Bearer ${localStorage.getItem('access_token')}`
           }
         });
 

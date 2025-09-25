@@ -64,18 +64,19 @@ export const API_CONFIG = {
   },
 };
 
-// FUNCIÓN CORREGIDA para fetch con autenticación
+// Asegurate de que todas las funciones usen BASE_URL correctamente
 export const fetchWithAuth = async (url, options = {}) => {
   const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
   
-  // Detectar si es FormData para no incluir Content-Type
-  const isFormData = options.body instanceof FormData;
+  // Construir URL completa si es una URL relativa
+  const fullUrl = url.startsWith('http') ? url : `${API_CONFIG.BASE_URL}${url}`;
+  
+  console.log('🔗 API Request to:', fullUrl); // Para debug
   
   const config = {
     ...options,
     headers: {
-      // Solo incluir headers por defecto si NO es FormData
-      ...(isFormData ? {} : API_CONFIG.DEFAULT_HEADERS),
+      ...API_CONFIG.DEFAULT_HEADERS,
       ...options.headers,
       ...(token && { Authorization: `Bearer ${token}` }),
     },
@@ -83,10 +84,10 @@ export const fetchWithAuth = async (url, options = {}) => {
   };
 
   try {
-    const response = await fetch(url, config);
+    const response = await fetch(fullUrl, config);
     
     if (response.status === 401) {
-      // Token expirado
+      console.error('🔐 Token inválido o expirado');
       localStorage.removeItem('access_token');
       sessionStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
@@ -97,16 +98,26 @@ export const fetchWithAuth = async (url, options = {}) => {
     
     return response;
   } catch (error) {
-    console.error('API Error:', error);
+    console.error('❌ API Error:', error);
     throw error;
   }
 };
 
-// Helper para construir URLs - FUNCIÓN ÚNICA
+// Helper para construir URLs
 export const buildApiUrl = (endpoint, params = {}) => {
+  // Si ya es una URL completa, devolverla tal como está
+  if (endpoint.startsWith('http')) {
+    return endpoint;
+  }
+  
+  // Si no empieza con /, agregarlo
+  if (!endpoint.startsWith('/')) {
+    endpoint = '/' + endpoint;
+  }
+  
   let url = API_CONFIG.BASE_URL + endpoint;
   
-  // Reemplazar parámetros en la URL (ej: /reports/:id/ -> /reports/123/)
+  // Reemplazar parámetros (:id, etc.)
   Object.entries(params).forEach(([key, value]) => {
     url = url.replace(`:${key}`, value);
   });
