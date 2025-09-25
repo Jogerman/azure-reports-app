@@ -3,23 +3,93 @@
 // Estados de reportes
 export const REPORT_STATUS = {
   DRAFT: 'draft',
-  PENDING: 'pending',
+  PENDING: 'pending', 
   PROCESSING: 'processing',
+  ANALYZING: 'analyzing',
   GENERATING: 'generating',
   COMPLETED: 'completed',
   FAILED: 'failed',
   CANCELLED: 'cancelled'
 };
-
 // Tipos de reportes
 export const REPORT_TYPES = {
+  COMPREHENSIVE: 'comprehensive',
   SECURITY: 'security',
+  PERFORMANCE: 'performance', 
   COST: 'cost',
-  PERFORMANCE: 'performance',
   RELIABILITY: 'reliability',
-  OPERATIONAL_EXCELLENCE: 'operational_excellence',
-  COMPREHENSIVE: 'comprehensive'
+  OPERATIONAL_EXCELLENCE: 'operational_excellence'
 };
+
+export const SPECIALIZED_REPORT_TYPES = [
+  {
+    value: REPORT_TYPES.COMPREHENSIVE,
+    label: 'Análisis Completo',
+    description: 'Análisis integral de todas las métricas',
+    icon: 'BarChart3',
+    color: 'blue',
+    estimatedTime: '3-5 minutos'
+  },
+  {
+    value: REPORT_TYPES.SECURITY,
+    label: 'Análisis de Seguridad', 
+    description: 'Enfoque en vulnerabilidades y cumplimiento',
+    icon: 'Shield',
+    color: 'red',
+    estimatedTime: '2-3 minutos'
+  },
+  {
+    value: REPORT_TYPES.PERFORMANCE,
+    label: 'Análisis de Rendimiento',
+    description: 'Optimización de performance y cuellos de botella', 
+    icon: 'Zap',
+    color: 'orange',
+    estimatedTime: '2-3 minutos'
+  },
+  {
+    value: REPORT_TYPES.COST,
+    label: 'Análisis de Costos',
+    description: 'Optimización financiera y cálculo de ROI',
+    icon: 'DollarSign', 
+    color: 'green',
+    estimatedTime: '2-3 minutos'
+  }
+];
+
+export const ANALYSIS_CATEGORIES = {
+  SECURITY: {
+    key: 'security',
+    label: 'Seguridad',
+    metrics: ['vulnerabilities', 'compliance_gaps', 'security_score'],
+    color: 'red'
+  },
+  PERFORMANCE: {
+    key: 'performance', 
+    label: 'Rendimiento',
+    metrics: ['bottlenecks', 'optimization_opportunities', 'performance_score'],
+    color: 'orange'
+  },
+  COST: {
+    key: 'cost',
+    label: 'Costos',
+    metrics: ['savings_potential', 'roi_analysis', 'cost_optimization'],
+    color: 'green'
+  },
+  RELIABILITY: {
+    key: 'reliability',
+    label: 'Confiabilidad', 
+    metrics: ['availability', 'disaster_recovery', 'backup_status'],
+    color: 'blue'
+  },
+  OPERATIONAL_EXCELLENCE: {
+    key: 'operational_excellence',
+    label: 'Excelencia Operacional',
+    metrics: ['automation', 'monitoring', 'best_practices'],
+    color: 'purple'
+  }
+};
+
+
 
 // Estados de archivos
 export const FILE_STATUS = {
@@ -142,6 +212,30 @@ export const SUCCESS_MESSAGES = {
   DATA_SAVED: 'Datos guardados correctamente.',
   EMAIL_SENT: 'Email enviado exitosamente.',
   PROFILE_UPDATED: 'Perfil actualizado correctamente.'
+};
+
+// Configuración de colores por tipo de reporte
+export const REPORT_TYPE_COLORS = {
+  [REPORT_TYPES.COMPREHENSIVE]: {
+    primary: 'blue-600',
+    secondary: 'blue-100', 
+    gradient: 'from-blue-500 to-purple-600'
+  },
+  [REPORT_TYPES.SECURITY]: {
+    primary: 'red-600',
+    secondary: 'red-100',
+    gradient: 'from-red-500 to-pink-600'
+  },
+  [REPORT_TYPES.PERFORMANCE]: {
+    primary: 'orange-600', 
+    secondary: 'orange-100',
+    gradient: 'from-orange-500 to-red-500'
+  },
+  [REPORT_TYPES.COST]: {
+    primary: 'green-600',
+    secondary: 'green-100', 
+    gradient: 'from-green-500 to-blue-500'
+  }
 };
 
 // Configuración de colores para gráficos

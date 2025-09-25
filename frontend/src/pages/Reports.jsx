@@ -1,656 +1,545 @@
-// frontend/src/pages/Reports.jsx - VERSIÓN HÍBRIDA CON GENERACIÓN DE REPORTES
+// frontend/src/pages/Reports.jsx - VERSIÓN ACTUALIZADA PARA REPORTES ESPECIALIZADOS
+
 import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { 
-  FileText, 
-  Upload, 
-  BarChart3,
-  RefreshCw,
-  Zap,
-  TrendingUp,
-  Shield,
-  DollarSign,
-  Database,
-  AlertCircle,
-  Clock,
-  CheckCircle,
-  FileX,
-  X,
-  Eye,
-  Download,
-  Plus,
-  Settings
-} from 'lucide-react';
-
-import { 
-  useFiles,
-  useRecentReports,
-  useReportGeneration
-} from '../hooks/useReports';
-
-import FileUpload from '../components/reports/FileUpload';
-import Loading from '../components/common/Loading';
-import { formatFileSize, formatRelativeTime } from '../utils/helpers';
-import toast from 'react-hot-toast';
+import { Upload, FileText, AlertCircle, CheckCircle, Clock, Download, Eye, BarChart3 } from 'lucide-react';
+import SpecializedReportConfig from '../components/reports/SpecializedReportConfig';
 
 const Reports = () => {
-  const [showUpload, setShowUpload] = useState(false);
-  const [selectedFile, setSelectedFile] = useState(null);
+  // Estados existentes
+  const [csvFile, setCsvFile] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState(0);
+  const [generatedReport, setGeneratedReport] = useState(null);
+  
+  // Nuevos estados para reportes especializados
   const [reportConfig, setReportConfig] = useState({
     title: '',
     description: '',
-    type: 'comprehensive',
-    includeCharts: true,
-    includeTables: true,
+    type: 'comprehensive', // Por defecto completo
+    includeGraphics: true,
+    includeDetailedTables: true,
     includeRecommendations: true
   });
+  
+  const [reports, setReports] = useState([]);
+  const [currentStep, setCurrentStep] = useState(1); // 1: Upload, 2: Config, 3: Generate
 
-  // Hooks para datos
-  const { data: files, isLoading: filesLoading, refetch: refetchFiles, error: filesError } = useFiles();
-  const { data: recentReports, isLoading: reportsLoading, refetch: refetchReports } = useRecentReports(5);
-  const { generateReport, isGenerating } = useReportGeneration();
-
-  // Debug en consola
+  // Cargar reportes existentes
   useEffect(() => {
-    console.log('🔍 Debug Reports:', {
-      files: files,
-      filesCount: files?.length || 0,
-      filesLoading,
-      filesError: filesError?.message,
-      selectedFile,
-      recentReports,
-      reportsLoading
-    });
-  }, [files, filesLoading, filesError, selectedFile, recentReports, reportsLoading]);
+    fetchReports();
+  }, []);
 
-  // Tipos de reportes disponibles
-  const reportTypes = [
-    { 
-      value: 'comprehensive', 
-      label: 'Análisis Completo', 
-      icon: BarChart3, 
-      description: 'Análisis detallado con todas las métricas' 
-    },
-    { 
-      value: 'security', 
-      label: 'Análisis de Seguridad', 
-      icon: Shield, 
-      description: 'Enfoque en vulnerabilidades y seguridad' 
-    },
-    { 
-      value: 'performance', 
-      label: 'Análisis de Rendimiento', 
-      icon: Zap, 
-      description: 'Optimización y eficiencia del sistema' 
-    },
-    { 
-      value: 'cost', 
-      label: 'Análisis de Costos', 
-      icon: DollarSign, 
-      description: 'Optimización financiera y ahorros' 
-    }
-  ];
-
-  const handleUploadComplete = (uploadedFiles) => {
-    console.log('📤 Upload completado, archivos recibidos:', uploadedFiles);
-    
-    setShowUpload(false);
-    
-    // Refrescar lista de archivos
-    console.log('🔄 Refrescando lista de archivos...');
-    refetchFiles();
-    
-    toast.success(`${uploadedFiles.length} archivo(s) subido(s) exitosamente`);
-    
-    // Auto-seleccionar primer archivo
-    if (uploadedFiles.length > 0) {
-      const firstFile = uploadedFiles[0];
-      console.log('🎯 Auto-seleccionando archivo:', firstFile);
+  const fetchReports = async () => {
+    try {
+      const response = await fetch('/api/reports/', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
       
-      setSelectedFile(firstFile);
-      setReportConfig(prev => ({ 
-        ...prev, 
-        title: `Análisis ${firstFile.original_filename?.replace('.csv', '') || 'Archivo'} - ${new Date().toLocaleDateString()}`
-      }));
+      if (response.ok) {
+        const data = await response.json();
+        setReports(data.results || []);
+      }
+    } catch (error) {
+      console.error('Error fetching reports:', error);
     }
   };
 
-  const handleGenerateReport = async () => {
-    if (!selectedFile) {
-      toast.error('Selecciona un archivo primero');
-      return;
-    }
+  const handleFileUpload = async (file) => {
+    if (!file) return;
 
-    if (!reportConfig.title.trim()) {
-      toast.error('Ingresa un título para el reporte');
-      return;
-    }
+    setIsUploading(true);
+    setUploadProgress(0);
+
+    const formData = new FormData();
+    formData.append('file', file);
 
     try {
-      console.log('🚀 Generando reporte con:', {
-        file: selectedFile,
-        config: reportConfig
+      const xhr = new XMLHttpRequest();
+      
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const progress = (event.loaded / event.total) * 100;
+          setUploadProgress(progress);
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status === 200 || xhr.status === 201) {
+          const response = JSON.parse(xhr.responseText);
+          setCsvFile(response);
+          setCurrentStep(2); // Ir a configuración
+          
+          // Auto-generar título basado en el filename
+          const baseTitle = response.original_filename.split('.')[0].replace(/[_-]/g, ' ');
+          setReportConfig(prev => ({
+            ...prev,
+            title: `${getReportTypeLabel(prev.type)} - ${baseTitle} - ${new Date().toLocaleDateString()}`
+          }));
+        }
+        setIsUploading(false);
+      };
+
+      xhr.onerror = () => {
+        console.error('Error uploading file');
+        setIsUploading(false);
+      };
+
+      xhr.open('POST', '/api/storage/files/');
+      xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('token')}`);
+      xhr.send(formData);
+
+    } catch (error) {
+      console.error('Upload error:', error);
+      setIsUploading(false);
+    }
+  };
+
+  const getReportTypeLabel = (type) => {
+    const types = {
+      'comprehensive': 'Análisis Completo',
+      'security': 'Análisis de Seguridad',
+      'performance': 'Análisis de Rendimiento',
+      'cost': 'Análisis de Costos'
+    };
+    return types[type] || 'Análisis';
+  };
+
+  const handleGenerateReport = async (config) => {
+    if (!csvFile) return;
+
+    setIsGenerating(true);
+    setGenerationProgress(0);
+    setCurrentStep(3);
+
+    // Simular progreso de generación
+    const progressInterval = setInterval(() => {
+      setGenerationProgress(prev => {
+        if (prev >= 90) return prev;
+        return prev + Math.random() * 10;
+      });
+    }, 500);
+
+    try {
+      const response = await fetch('/api/reports/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          title: config.title,
+          description: config.description,
+          report_type: config.type,
+          csv_file: csvFile.id,
+          configuration: {
+            include_graphics: config.includeGraphics,
+            include_detailed_tables: config.includeDetailedTables,
+            include_recommendations: config.includeRecommendations
+          }
+        })
       });
 
-      const result = await generateReport(selectedFile.id, reportConfig);
-      console.log('✅ Reporte generado, resultado:', result);
-      
-      refetchReports();
-      
-      // Limpiar formulario
-      setReportConfig(prev => ({ 
-        ...prev, 
-        title: '',
-        description: '' 
-      }));
-      
-      toast.success('¡Reporte generado exitosamente!');
-      
-      // Redirigir a la página del reporte HTML
-      if (result && result.id) {
-        console.log('🔗 Redirigiendo a reporte:', result.id);
-        // Esperar un momento para que se vea el toast
-        setTimeout(() => {
-          window.location.href = `/app/reports/${result.id}`;
-        }, 1500);
-      } else if (result && result.report_id) {
-        console.log('🔗 Redirigiendo a reporte (report_id):', result.report_id);
-        setTimeout(() => {
-          window.location.href = `/app/reports/${result.report_id}`;
-        }, 1500);
+      if (response.ok) {
+        const newReport = await response.json();
+        
+        // Polling para verificar el estado del reporte
+        pollReportStatus(newReport.id, progressInterval);
+        
       } else {
-        console.warn('⚠️ No se recibió ID del reporte, abriendo en nueva pestaña...');
-        // Fallback: Abrir lista de reportes
-        setTimeout(() => {
-          window.location.href = '/app/history';
-        }, 1500);
+        throw new Error('Error creating report');
       }
-      
+
     } catch (error) {
-      console.error('❌ Error generando reporte:', error);
-      toast.error('Error generando reporte: ' + error.message);
+      console.error('Error generating report:', error);
+      clearInterval(progressInterval);
+      setIsGenerating(false);
     }
+  };
+
+  const pollReportStatus = async (reportId, progressInterval) => {
+    const maxAttempts = 60; // 5 minutos máximo
+    let attempts = 0;
+
+    const checkStatus = async () => {
+      try {
+        const response = await fetch(`/api/reports/${reportId}/`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        });
+
+        if (response.ok) {
+          const report = await response.json();
+          
+          if (report.status === 'completed') {
+            clearInterval(progressInterval);
+            setGenerationProgress(100);
+            setGeneratedReport(report);
+            setIsGenerating(false);
+            fetchReports(); // Actualizar lista
+            
+          } else if (report.status === 'failed') {
+            clearInterval(progressInterval);
+            setIsGenerating(false);
+            console.error('Report generation failed:', report.error_message);
+            
+          } else if (attempts < maxAttempts) {
+            // Continuar polling
+            attempts++;
+            setTimeout(checkStatus, 5000); // Check every 5 seconds
+            
+          } else {
+            // Timeout
+            clearInterval(progressInterval);
+            setIsGenerating(false);
+          }
+        }
+        
+      } catch (error) {
+        console.error('Error checking report status:', error);
+        clearInterval(progressInterval);
+        setIsGenerating(false);
+      }
+    };
+
+    // Iniciar primera verificación después de 3 segundos
+    setTimeout(checkStatus, 3000);
+  };
+
+  const handleReset = () => {
+    setCsvFile(null);
+    setGeneratedReport(null);
+    setCurrentStep(1);
+    setReportConfig({
+      title: '',
+      description: '',
+      type: 'comprehensive',
+      includeGraphics: true,
+      includeDetailedTables: true,
+      includeRecommendations: true
+    });
+    setUploadProgress(0);
+    setGenerationProgress(0);
+  };
+
+  const getStatusIcon = (status) => {
+    switch (status) {
+      case 'completed':
+        return <CheckCircle className="w-5 h-5 text-green-500" />;
+      case 'processing':
+      case 'generating':
+        return <Clock className="w-5 h-5 text-blue-500 animate-spin" />;
+      case 'failed':
+        return <AlertCircle className="w-5 h-5 text-red-500" />;
+      default:
+        return <FileText className="w-5 h-5 text-gray-500" />;
+    }
+  };
+
+  const getStatusLabel = (status) => {
+    const labels = {
+      'draft': 'Borrador',
+      'pending': 'Pendiente',
+      'processing': 'Procesando',
+      'generating': 'Generando',
+      'completed': 'Completado',
+      'failed': 'Fallido'
+    };
+    return labels[status] || status;
   };
 
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl p-8 text-white">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold mb-2">Generador de Reportes</h1>
-            <p className="text-blue-100 text-lg">
-              Sube archivos CSV y genera reportes inteligentes con IA
-            </p>
-          </div>
-          <div className="hidden md:block">
-            <div className="w-20 h-20 bg-white/20 rounded-2xl flex items-center justify-center">
-              <BarChart3 className="w-10 h-10" />
-            </div>
+    <div className="min-h-screen bg-gray-50">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900">Reportes de Azure</h1>
+          <p className="mt-2 text-gray-600">
+            Genera reportes especializados basados en los datos de Azure Advisor
+          </p>
+        </div>
+
+        {/* Progress Steps */}
+        <div className="mb-8">
+          <div className="flex items-center">
+            {[
+              { step: 1, label: 'Subir CSV', icon: Upload },
+              { step: 2, label: 'Configurar', icon: BarChart3 },
+              { step: 3, label: 'Generar', icon: FileText }
+            ].map((item, index) => {
+              const Icon = item.icon;
+              const isActive = currentStep === item.step;
+              const isCompleted = currentStep > item.step;
+              
+              return (
+                <React.Fragment key={item.step}>
+                  <div className="flex items-center">
+                    <div className={`flex items-center justify-center w-10 h-10 rounded-full border-2 ${
+                      isCompleted 
+                        ? 'bg-green-500 border-green-500 text-white'
+                        : isActive 
+                          ? 'border-blue-500 text-blue-500'
+                          : 'border-gray-300 text-gray-400'
+                    }`}>
+                      {isCompleted ? (
+                        <CheckCircle className="w-6 h-6" />
+                      ) : (
+                        <Icon className="w-5 h-5" />
+                      )}
+                    </div>
+                    <span className={`ml-3 text-sm font-medium ${
+                      isActive ? 'text-blue-600' : isCompleted ? 'text-green-600' : 'text-gray-500'
+                    }`}>
+                      {item.label}
+                    </span>
+                  </div>
+                  {index < 2 && (
+                    <div className={`flex-1 h-0.5 mx-4 ${
+                      currentStep > item.step ? 'bg-green-500' : 'bg-gray-300'
+                    }`} />
+                  )}
+                </React.Fragment>
+              );
+            })}
           </div>
         </div>
-      </div>
 
-      {/* Debug info (solo en desarrollo) */}
-      {process.env.NODE_ENV === 'development' && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-          <h3 className="text-sm font-medium text-yellow-800 mb-2">🔍 Debug Info</h3>
-          <div className="text-xs text-yellow-700 space-y-1">
-            <div>📂 Archivos cargados: {files?.length || 0}</div>
-            <div>📊 Cargando archivos: {filesLoading ? 'Sí' : 'No'}</div>
-            <div>❌ Error archivos: {filesError ? 'Sí' : 'No'}</div>
-            <div>📎 Archivo seleccionado: {selectedFile ? selectedFile.original_filename : 'Ninguno'}</div>
-            <div>📈 Reportes recientes: {recentReports?.length || 0}</div>
-          </div>
-        </div>
-      )}
-
-      {/* Contenido Principal */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* Panel Izquierdo - Archivos Disponibles */}
-        <div className="lg:col-span-2">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center space-x-3">
-                <Database className="w-6 h-6 text-blue-600" />
-                <div>
-                  <h2 className="text-xl font-semibold text-gray-900">
-                    Archivos Disponibles ({files?.length || 0})
-                  </h2>
-                  <p className="text-sm text-gray-500">
-                    Selecciona un archivo CSV para generar reportes
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Main Content */}
+          <div className="lg:col-span-2">
+            {/* Step 1: File Upload */}
+            {currentStep === 1 && (
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <h2 className="text-xl font-semibold text-gray-900 mb-4">
+                  Subir Archivo CSV
+                </h2>
+                
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-gray-400 transition-colors">
+                  <Upload className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">
+                    Subir archivo de Azure Advisor
+                  </h3>
+                  <p className="text-gray-600 mb-4">
+                    Arrastra tu archivo CSV aquí, o haz clic para seleccionar
                   </p>
+                  
+                  <input
+                    type="file"
+                    accept=".csv"
+                    onChange={(e) => handleFileUpload(e.target.files[0])}
+                    className="hidden"
+                    id="file-upload"
+                    disabled={isUploading}
+                  />
+                  
+                  <label
+                    htmlFor="file-upload"
+                    className={`inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white ${
+                      isUploading 
+                        ? 'bg-gray-400 cursor-not-allowed'
+                        : 'bg-blue-600 hover:bg-blue-700 cursor-pointer'
+                    } transition-colors`}
+                  >
+                    {isUploading ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                        Subiendo... {Math.round(uploadProgress)}%
+                      </>
+                    ) : (
+                      'Seleccionar Archivo'
+                    )}
+                  </label>
                 </div>
-              </div>
-              <div className="flex items-center space-x-3">
-                <button
-                  onClick={() => refetchFiles()}
-                  disabled={filesLoading}
-                  className="inline-flex items-center px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-4 h-4 mr-2 ${filesLoading ? 'animate-spin' : ''}`} />
-                  Actualizar
-                </button>
-                <button
-                  onClick={() => setShowUpload(true)}
-                  className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Subir Archivo
-                </button>
-              </div>
-            </div>
 
-            {/* Lista de archivos */}
-            {filesLoading ? (
-              <div className="space-y-3">
-                {[1, 2, 3].map(i => (
-                  <div key={i} className="animate-pulse flex items-center space-x-4 p-4 border border-gray-200 rounded-lg">
-                    <div className="w-12 h-12 bg-gray-200 rounded-lg"></div>
-                    <div className="flex-1 space-y-2">
-                      <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                      <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                {isUploading && (
+                  <div className="mt-4">
+                    <div className="bg-blue-50 rounded-lg p-4">
+                      <div className="flex items-center mb-2">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                        <span className="text-sm font-medium text-blue-900">
+                          Subiendo archivo...
+                        </span>
+                      </div>
+                      <div className="w-full bg-blue-200 rounded-full h-2">
+                        <div
+                          className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                          style={{ width: `${uploadProgress}%` }}
+                        ></div>
+                      </div>
                     </div>
                   </div>
-                ))}
+                )}
               </div>
-            ) : filesError ? (
-              <div className="text-center py-12">
-                <AlertCircle className="w-16 h-16 text-red-300 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-gray-900 mb-2">
-                  Error cargando archivos
-                </h3>
-                <p className="text-gray-500 mb-6">
-                  No se pudieron cargar los archivos del servidor
-                </p>
-                <button
-                  onClick={() => refetchFiles()}
-                  className="btn-primary"
-                >
-                  <RefreshCw className="w-4 h-4 mr-2" />
-                  Reintentar
-                </button>
+            )}
+
+            {/* Step 2: Configuration */}
+            {currentStep === 2 && csvFile && (
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <SpecializedReportConfig
+                  reportConfig={reportConfig}
+                  setReportConfig={setReportConfig}
+                  onGenerate={handleGenerateReport}
+                  csvFile={csvFile}
+                  isGenerating={isGenerating}
+                />
               </div>
-            ) : !files || files.length === 0 ? (
-              <div className="text-center py-12">
-                <FileX className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-gray-900 mb-2">
-                  No hay archivos disponibles
-                </h3>
-                <p className="text-gray-500 mb-6">
-                  Sube tu primer archivo CSV de Azure Advisor para comenzar
-                </p>
-                <button
-                  onClick={() => setShowUpload(true)}
-                  className="btn-primary"
-                >
-                  <Upload className="w-4 h-4 mr-2" />
-                  Subir Archivo
-                </button>
+            )}
+
+            {/* Step 3: Generation */}
+            {currentStep === 3 && (
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                {isGenerating ? (
+                  <div className="text-center">
+                    <div className="mb-6">
+                      <div className="mx-auto w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-4">
+                        <BarChart3 className="w-8 h-8 text-blue-600 animate-pulse" />
+                      </div>
+                      <h2 className="text-xl font-semibold text-gray-900 mb-2">
+                        Generando Reporte
+                      </h2>
+                      <p className="text-gray-600">
+                        Tu reporte de {getReportTypeLabel(reportConfig.type).toLowerCase()} está siendo procesado...
+                      </p>
+                    </div>
+
+                    <div className="mb-6">
+                      <div className="w-full bg-gray-200 rounded-full h-3">
+                        <div
+                          className="bg-blue-600 h-3 rounded-full transition-all duration-500"
+                          style={{ width: `${generationProgress}%` }}
+                        ></div>
+                      </div>
+                      <p className="text-sm text-gray-500 mt-2">
+                        {Math.round(generationProgress)}% completado
+                      </p>
+                    </div>
+
+                    <div className="text-sm text-gray-600">
+                      <p>⚡ Analizando datos con IA...</p>
+                      <p>📊 Generando visualizaciones...</p>
+                      <p>📄 Creando documento PDF...</p>
+                    </div>
+                  </div>
+                ) : generatedReport ? (
+                  <div className="text-center">
+                    <div className="mb-6">
+                      <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
+                        <CheckCircle className="w-8 h-8 text-green-600" />
+                      </div>
+                      <h2 className="text-xl font-semibold text-gray-900 mb-2">
+                        ¡Reporte Completado!
+                      </h2>
+                      <p className="text-gray-600">
+                        Tu reporte ha sido generado exitosamente
+                      </p>
+                    </div>
+
+                    <div className="flex justify-center space-x-4">
+                      <a
+                        href={`/api/reports/${generatedReport.id}/html/`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center px-6 py-3 border border-gray-300 text-base font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                      >
+                        <Eye className="w-5 h-5 mr-2" />
+                        Ver Reporte
+                      </a>
+                      <a
+                        href={`/api/reports/${generatedReport.id}/pdf/`}
+                        className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
+                      >
+                        <Download className="w-5 h-5 mr-2" />
+                        Descargar PDF
+                      </a>
+                    </div>
+
+                    <button
+                      onClick={handleReset}
+                      className="mt-4 text-blue-600 hover:text-blue-800 text-sm font-medium"
+                    >
+                      Generar otro reporte
+                    </button>
+                  </div>
+                ) : null}
               </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {files.map((file, index) => (
-                  <motion.div
-                    key={file.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.1 }}
-                    className={`relative p-4 border-2 rounded-xl cursor-pointer transition-all hover:shadow-md ${
-                      selectedFile?.id === file.id
-                        ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                    onClick={() => setSelectedFile(file)}
-                  >
-                    <div className="flex items-start space-x-4">
-                      <div className="flex-shrink-0">
-                        <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
-                          <FileText className="w-6 h-6 text-green-600" />
+            )}
+          </div>
+
+          {/* Sidebar - Recent Reports */}
+          <div className="lg:col-span-1">
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+              <h3 className="text-lg font-medium text-gray-900 mb-4">
+                Reportes Recientes
+              </h3>
+              
+              {reports.length > 0 ? (
+                <div className="space-y-3">
+                  {reports.slice(0, 5).map((report) => (
+                    <div
+                      key={report.id}
+                      className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:bg-gray-50"
+                    >
+                      <div className="flex items-center space-x-3">
+                        {getStatusIcon(report.status)}
+                        <div>
+                          <p className="text-sm font-medium text-gray-900 truncate">
+                            {report.title}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {getStatusLabel(report.status)} • {new Date(report.created_at).toLocaleDateString()}
+                          </p>
                         </div>
                       </div>
                       
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-sm font-medium text-gray-900 truncate">
-                            {file.original_filename || file.filename || `Archivo ${file.id}`}
-                          </h3>
-                          {selectedFile?.id === file.id && (
-                            <CheckCircle className="w-5 h-5 text-blue-600" />
-                          )}
+                      {report.status === 'completed' && (
+                        <div className="flex space-x-1">
+                          <a
+                            href={`/api/reports/${report.id}/html/`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1 text-gray-400 hover:text-blue-600"
+                            title="Ver reporte"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </a>
+                          <a
+                            href={`/api/reports/${report.id}/pdf/`}
+                            className="p-1 text-gray-400 hover:text-green-600"
+                            title="Descargar PDF"
+                          >
+                            <Download className="w-4 h-4" />
+                          </a>
                         </div>
-                        
-                        <div className="mt-1 flex items-center space-x-3 text-xs text-gray-500">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-green-100 text-green-800 font-medium">
-                            {(file.file_type || 'csv').toUpperCase()}
-                          </span>
-                          <span>{formatFileSize(file.file_size || 0)}</span>
-                        </div>
-                        
-                        <div className="mt-2 flex items-center text-xs text-gray-500">
-                          <Clock className="w-3 h-3 mr-1" />
-                          <span>
-                            {file.upload_date || file.created_at
-                              ? formatRelativeTime(file.upload_date || file.created_at)
-                              : 'Fecha desconocida'
-                            }
-                          </span>
-                        </div>
-
-                        {file.analysis_data && (
-                          <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                            <div className="text-gray-600">
-                              <span className="font-medium">{file.analysis_data.total_rows || 0}</span> filas
-                            </div>
-                            <div className="text-gray-600">
-                              <span className="font-medium">{file.analysis_data.total_recommendations || 0}</span> recomendaciones
-                            </div>
-                          </div>
-                        )}
-                      </div>
+                      )}
                     </div>
-                  </motion.div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Panel Derecho - Generador de Reportes */}
-        <div className="space-y-6">
-          {/* Configuración de Reporte */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <div className="flex items-center space-x-3 mb-6">
-              <Settings className="w-5 h-5 text-purple-600" />
-              <h3 className="text-lg font-semibold text-gray-900">
-                Configurar Reporte
-              </h3>
-            </div>
-
-            {!selectedFile ? (
-              <div className="text-center py-8">
-                <AlertCircle className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-                <h4 className="text-lg font-medium text-gray-900 mb-2">
-                  Selecciona un archivo
-                </h4>
+                  ))}
+                </div>
+              ) : (
                 <p className="text-gray-500 text-sm">
-                  Primero selecciona un archivo CSV para configurar el reporte
+                  No hay reportes generados aún
                 </p>
-              </div>
-            ) : (
-              <div className="space-y-5">
-                {/* Archivo seleccionado */}
-                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                  <div className="flex items-center space-x-3">
-                    <FileText className="w-4 h-4 text-blue-600" />
-                    <div>
-                      <div className="text-sm font-medium text-blue-900">
-                        {selectedFile.original_filename || selectedFile.filename}
-                      </div>
-                      <div className="text-xs text-blue-700">
-                        {formatFileSize(selectedFile.file_size || 0)} • Listo para análisis
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Título del reporte */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Título del Reporte
-                  </label>
-                  <input
-                    type="text"
-                    value={reportConfig.title}
-                    onChange={(e) => setReportConfig(prev => ({ ...prev, title: e.target.value }))}
-                    placeholder="Ej: Análisis de Seguridad Azure - Marzo 2025"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-
-                {/* Descripción (opcional) */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Descripción (Opcional)
-                  </label>
-                  <textarea
-                    rows={3}
-                    value={reportConfig.description}
-                    onChange={(e) => setReportConfig(prev => ({ ...prev, description: e.target.value }))}
-                    placeholder="Describe el propósito de este reporte..."
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-
-                {/* Tipo de reporte */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-3">
-                    Tipo de Análisis
-                  </label>
-                  <div className="space-y-2">
-                    {reportTypes.map((type) => {
-                      const IconComponent = type.icon;
-                      return (
-                        <label
-                          key={type.value}
-                          className={`flex items-center p-3 border rounded-lg cursor-pointer transition-colors ${
-                            reportConfig.type === type.value
-                              ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-200'
-                              : 'border-gray-200 hover:border-gray-300'
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="reportType"
-                            value={type.value}
-                            checked={reportConfig.type === type.value}
-                            onChange={(e) => setReportConfig(prev => ({ ...prev, type: e.target.value }))}
-                            className="sr-only"
-                          />
-                          <IconComponent className="w-4 h-4 text-blue-600 mr-3" />
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">{type.label}</div>
-                            <div className="text-xs text-gray-500">{type.description}</div>
-                          </div>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Opciones adicionales */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-3">
-                    Opciones del Reporte
-                  </label>
-                  <div className="space-y-2">
-                    <label className="flex items-center">
-                      <input
-                        type="checkbox"
-                        checked={reportConfig.includeCharts}
-                        onChange={(e) => setReportConfig(prev => ({ ...prev, includeCharts: e.target.checked }))}
-                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                      />
-                      <span className="ml-2 text-sm text-gray-700">Incluir gráficos y visualizaciones</span>
-                    </label>
-                    <label className="flex items-center">
-                      <input
-                        type="checkbox"
-                        checked={reportConfig.includeTables}
-                        onChange={(e) => setReportConfig(prev => ({ ...prev, includeTables: e.target.checked }))}
-                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                      />
-                      <span className="ml-2 text-sm text-gray-700">Incluir tablas detalladas</span>
-                    </label>
-                    <label className="flex items-center">
-                      <input
-                        type="checkbox"
-                        checked={reportConfig.includeRecommendations}
-                        onChange={(e) => setReportConfig(prev => ({ ...prev, includeRecommendations: e.target.checked }))}
-                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                      />
-                      <span className="ml-2 text-sm text-gray-700">Incluir recomendaciones de IA</span>
-                    </label>
-                  </div>
-                </div>
-
-                {/* Botón de generar */}
-                <button
-                  onClick={handleGenerateReport}
-                  disabled={isGenerating || !reportConfig.title.trim()}
-                  className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-3 px-4 rounded-lg font-medium hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center"
-                >
-                  {isGenerating ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                      Generando Reporte...
-                    </>
-                  ) : (
-                    <>
-                      <Zap className="w-4 h-4 mr-2" />
-                      Generar Reporte con IA
-                    </>
-                  )}
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Reportes Recientes */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center space-x-3">
-                <BarChart3 className="w-5 h-5 text-green-600" />
-                <h3 className="text-lg font-semibold text-gray-900">
-                  Reportes Recientes
-                </h3>
-              </div>
-              <button
-                onClick={() => refetchReports()}
-                className="text-green-600 hover:text-green-700 text-sm font-medium"
-              >
-                <RefreshCw className="w-4 h-4" />
-              </button>
+              )}
             </div>
 
-            {reportsLoading ? (
-              <div className="space-y-3">
-                {[1, 2, 3].map(i => (
-                  <div key={i} className="animate-pulse flex items-center space-x-3 p-3 border border-gray-200 rounded-lg">
-                    <div className="w-8 h-8 bg-gray-200 rounded"></div>
-                    <div className="flex-1 space-y-1">
-                      <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                      <div className="h-3 bg-gray-200 rounded w-1/2"></div>
-                    </div>
-                  </div>
-                ))}
+            {/* Help Panel */}
+            <div className="mt-6 bg-blue-50 rounded-lg border border-blue-200 p-4">
+              <h4 className="text-sm font-medium text-blue-900 mb-2">
+                💡 Tipos de Reporte
+              </h4>
+              <div className="space-y-2 text-xs text-blue-800">
+                <p><strong>Completo:</strong> Análisis integral de todas las categorías</p>
+                <p><strong>Seguridad:</strong> Enfoque en vulnerabilidades y cumplimiento</p>
+                <p><strong>Rendimiento:</strong> Optimización de performance</p>
+                <p><strong>Costos:</strong> Análisis de ahorros y ROI</p>
               </div>
-            ) : recentReports && recentReports.length > 0 ? (
-              <div className="space-y-3">
-                {recentReports.map((report, index) => (
-                  <motion.div
-                    key={report.id}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.1 }}
-                    className="flex items-center space-x-3 p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                      report.status === 'completed' ? 'bg-green-100' : 
-                      report.status === 'processing' ? 'bg-yellow-100' : 'bg-gray-100'
-                    }`}>
-                      <FileText className={`w-4 h-4 ${
-                        report.status === 'completed' ? 'text-green-600' : 
-                        report.status === 'processing' ? 'text-yellow-600' : 'text-gray-600'
-                      }`} />
-                    </div>
-                    
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-sm font-medium text-gray-900 truncate">
-                        {report.title || `Reporte ${report.id}`}
-                      </h4>
-                      <div className="flex items-center space-x-2 text-xs text-gray-500">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                          report.status === 'completed' ? 'bg-green-100 text-green-800' : 
-                          report.status === 'processing' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800'
-                        }`}>
-                          {report.status === 'completed' ? 'Completado' : 
-                           report.status === 'processing' ? 'Procesando' : 'Pendiente'}
-                        </span>
-                        <span>•</span>
-                        <span>{formatRelativeTime(report.created_at)}</span>
-                      </div>
-                    </div>
-
-                    {report.status === 'completed' && (
-                      <div className="flex items-center space-x-1">
-                        <button
-                          onClick={() => window.open(`/app/reports/${report.id}`, '_blank')}
-                          className="p-1 text-gray-400 hover:text-blue-600"
-                          title="Ver reporte"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => toast.info('Descarga en desarrollo')}
-                          className="p-1 text-gray-400 hover:text-green-600"
-                          title="Descargar PDF"
-                        >
-                          <Download className="w-4 h-4" />
-                        </button>
-                      </div>
-                    )}
-                  </motion.div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-6">
-                <FileText className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-                <h4 className="text-sm font-medium text-gray-900 mb-1">
-                  No hay reportes recientes
-                </h4>
-                <p className="text-xs text-gray-500">
-                  Los reportes generados aparecerán aquí
-                </p>
-              </div>
-            )}
+            </div>
           </div>
         </div>
       </div>
-
-      {/* Modal de Upload */}
-      {showUpload && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-xl shadow-xl w-full max-w-md"
-          >
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">
-                  Subir Archivo CSV
-                </h3>
-                <button
-                  onClick={() => setShowUpload(false)}
-                  className="text-gray-400 hover:text-gray-600 transition-colors"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              
-              <FileUpload
-                onUploadComplete={handleUploadComplete}
-                onError={(error) => {
-                  console.error('Error en upload:', error);
-                  toast.error('Error subiendo archivo: ' + error.message);
-                }}
-              />
-            </div>
-          </motion.div>
-        </div>
-      )}
     </div>
   );
 };

@@ -202,3 +202,79 @@ class ReportCreateSerializer(serializers.ModelSerializer):
         )
         
         return report
+    
+class ReportPreviewSerializer(serializers.ModelSerializer):
+    """Serializador para vista previa de reportes"""
+    csv_file_info = serializers.SerializerMethodField()
+    analysis_summary = serializers.SerializerMethodField()
+    estimated_metrics = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Report
+        fields = [
+            'id', 'title', 'description', 'report_type', 'status',
+            'created_at', 'completed_at', 'csv_file_info', 
+            'analysis_summary', 'estimated_metrics'
+        ]
+    
+    def get_csv_file_info(self, obj):
+        if obj.csv_file:
+            return {
+                'filename': obj.csv_file.original_filename,
+                'rows': obj.csv_file.rows_count,
+                'columns': obj.csv_file.columns_count,
+                'size': obj.csv_file.file_size,
+                'processed_date': obj.csv_file.processed_date
+            }
+        return None
+    
+    def get_analysis_summary(self, obj):
+        if obj.analysis_results and obj.report_type in ['security', 'performance', 'cost']:
+            analysis_key = f'{obj.report_type}_analysis'
+            if analysis_key in obj.analysis_results:
+                return obj.analysis_results[analysis_key].get('dashboard_metrics', {})
+        elif obj.analysis_results:
+            return obj.analysis_results.get('dashboard_metrics', {})
+        return {}
+    
+    def get_estimated_metrics(self, obj):
+        """Calcular métricas estimadas basadas en el tipo de reporte"""
+        if not obj.csv_file or not obj.csv_file.rows_count:
+            return {}
+        
+        rows = obj.csv_file.rows_count
+        base_time = 2  # minutos base
+        
+        estimated = {
+            'processing_time_minutes': base_time + (rows / 1000),  # +1 min por cada 1000 filas
+            'expected_insights': min(rows // 10, 100),  # Máximo 100 insights
+            'complexity_score': min((rows / 100) + (obj.csv_file.columns_count or 0), 10)
+        }
+        
+        # Ajustes por tipo de reporte
+        if obj.report_type == 'comprehensive':
+            estimated['processing_time_minutes'] *= 1.5
+        
+        return estimated
+
+class SpecializedAnalysisSerializer(serializers.Serializer):
+    """Serializador para análisis especializado"""
+    report_id = serializers.UUIDField()
+    analysis_type = serializers.CharField()
+    generated_at = serializers.DateTimeField()
+    data = serializers.JSONField()
+    
+class ValidationRequestSerializer(serializers.Serializer):
+    """Serializador para requests de validación de CSV"""
+    csv_file_id = serializers.UUIDField()
+    report_type = serializers.ChoiceField(choices=[
+        'comprehensive', 'security', 'performance', 'cost'
+    ])
+    
+class ValidationResponseSerializer(serializers.Serializer):
+    """Serializador para respuestas de validación"""
+    valid = serializers.BooleanField()
+    total_records = serializers.IntegerField(required=False)
+    columns_found = serializers.ListField(child=serializers.CharField(), required=False)
+    type_specific_data = serializers.JSONField(required=False)
+    error = serializers.CharField(required=False)
