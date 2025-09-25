@@ -1,0 +1,42 @@
+﻿{
+    "folders": [
+        {
+            "name": "Backend",
+            "path": "./backend"
+        },
+        {
+            "name": "Frontend", 
+            "path": "./frontend"
+        },
+        {
+            "name": "Infrastructure",
+            "path": "./infrastructure"
+        },
+        {
+            "name": "Database",
+            "path": "./database"
+        }
+    ],
+    "settings": {
+        "python.defaultInterpreterPath": "./backend/venv/Scripts/python.exe",
+        "python.terminal.activateEnvironment": true,
+        "eslint.workingDirectories": ["frontend"],
+        "typescript.preferences.includePackageJsonAutoImports": "on",
+        "emmet.includeLanguages": {
+            "javascript": "javascriptreact"
+        },
+        "files.associations": {
+            "*.jsx": "javascriptreact"
+        }
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-python.python",
+            "ms-python.django",
+            "bradlc.vscode-tailwindcss",
+            "esbenp.prettier-vscode",
+            "ms-vscode.vscode-eslint",
+            "ms-vscode.thunder-client"
+        ]
+    }
+}

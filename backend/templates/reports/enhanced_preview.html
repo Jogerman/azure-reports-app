@@ -1,0 +1,231 @@
+<!-- templates/reports/enhanced_preview.html -->
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Vista Previa - {{ report.title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .preview-header {
+        background: linear-gradient(135deg, #1976D2, #2196F3);
+        color: white;
+        padding: 20px;
+        border-radius: 10px 10px 0 0;
+        margin-bottom: 0;
+    }
+    
+    .preview-actions {
+        background: #f8f9fa;
+        padding: 15px 20px;
+        border-radius: 0 0 10px 10px;
+        border-top: 1px solid #e0e0e0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    
+    .preview-container {
+        background: white;
+        border-radius: 10px;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        overflow: hidden;
+        margin-bottom: 20px;
+    }
+    
+    .preview-iframe {
+        width: 100%;
+        min-height: 800px;
+        border: none;
+        display: block;
+    }
+    
+    .metrics-quick-view {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+        margin-bottom: 20px;
+    }
+    
+    .metric-quick-card {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        text-align: center;
+        border-left: 4px solid #2196F3;
+    }
+    
+    .metric-quick-number {
+        font-size: 2rem;
+        font-weight: bold;
+        color: #1976D2;
+        margin-bottom: 5px;
+    }
+    
+    .metric-quick-label {
+        color: #666;
+        font-size: 0.9rem;
+    }
+    
+    @media (max-width: 768px) {
+        .preview-actions {
+            flex-direction: column;
+            align-items: stretch;
+        }
+        
+        .metrics-quick-view {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <!-- Quick Metrics Overview -->
+            {% if report.get_preview_metrics %}
+            <div class="metrics-quick-view">
+                {% with metrics=report.get_preview_metrics %}
+                <div class="metric-quick-card">
+                    <div class="metric-quick-number">{{ metrics.total_recommendations|default:0 }}</div>
+                    <div class="metric-quick-label">Recomendaciones Totales</div>
+                </div>
+                <div class="metric-quick-card">
+                    <div class="metric-quick-number">{{ metrics.high_priority_count|default:0 }}</div>
+                    <div class="metric-quick-label">Alta Prioridad</div>
+                </div>
+                <div class="metric-quick-card">
+                    <div class="metric-quick-number">{{ metrics.categories_count|default:0 }}</div>
+                    <div class="metric-quick-label">Categorías</div>
+                </div>
+                <div class="metric-quick-card">
+                    <div class="metric-quick-number">
+                        {% if metrics.has_cost_optimization %}
+                            <i class="fas fa-check-circle text-success"></i>
+                        {% else %}
+                            <i class="fas fa-times-circle text-muted"></i>
+                        {% endif %}
+                    </div>
+                    <div class="metric-quick-label">Optimización de Costos</div>
+                </div>
+                {% endwith %}
+            </div>
+            {% endif %}
+            
+            <!-- Preview Container -->
+            <div class="preview-container">
+                <div class="preview-header">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h4 class="mb-1">
+                                <i class="fas fa-chart-line me-2"></i>Vista Previa del Reporte
+                            </h4>
+                            <p class="mb-0 opacity-75">{{ report.title }} - {{ report.client_name }}</p>
+                        </div>
+                        <div class="text-end">
+                            <small>Generado: {{ report.updated_at|date:"d/m/Y H:i" }}</small>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Enhanced HTML Preview -->
+                {% if report.enhanced_html_available %}
+                <iframe 
+                    src="{% url 'reports:html' report.pk %}" 
+                    class="preview-iframe"
+                    title="Vista previa del reporte {{ report.title }}"
+                    onload="this.style.height = this.contentWindow.document.body.scrollHeight + 50 + 'px'">
+                </iframe>
+                {% else %}
+                <div class="p-4 text-center">
+                    <i class="fas fa-exclamation-triangle fa-3x text-warning mb-3"></i>
+                    <h5>Datos Insuficientes</h5>
+                    <p class="text-muted">No hay datos CSV disponibles para generar la vista previa mejorada.</p>
+                    <a href="{% url 'reports:edit' report.pk %}" class="btn btn-primary">
+                        <i class="fas fa-upload me-2"></i>Cargar Datos CSV
+                    </a>
+                </div>
+                {% endif %}
+                
+                <div class="preview-actions">
+                    <div>
+                        <span class="badge bg-info">
+                            <i class="fas fa-eye me-1"></i>Vista Previa
+                        </span>
+                        {% if report.status == 'completed' %}
+                        <span class="badge bg-success ms-2">
+                            <i class="fas fa-check me-1"></i>Completado
+                        </span>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="btn-group" role="group">
+                        <a href="{% url 'reports:edit' report.pk %}" 
+                           class="btn btn-outline-primary btn-sm">
+                            <i class="fas fa-edit me-1"></i>Editar
+                        </a>
+                        
+                        {% if report.enhanced_html_available %}
+                        <a href="{% url 'reports:generate_pdf' report.pk %}" 
+                           class="btn btn-success btn-sm">
+                            <i class="fas fa-file-pdf me-1"></i>Generar PDF
+                        </a>
+                        {% endif %}
+                        
+                        <a href="{% url 'reports:duplicate' report.pk %}" 
+                           class="btn btn-outline-secondary btn-sm">
+                            <i class="fas fa-copy me-1"></i>Duplicar
+                        </a>
+                        
+                        <a href="{% url 'reports:list' %}" 
+                           class="btn btn-outline-dark btn-sm">
+                            <i class="fas fa-arrow-left me-1"></i>Volver
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Auto-resize iframe
+    const iframe = document.querySelector('.preview-iframe');
+    if (iframe) {
+        iframe.onload = function() {
+            try {
+                const iframeDocument = this.contentDocument || this.contentWindow.document;
+                const height = Math.max(
+                    iframeDocument.body.scrollHeight,
+                    iframeDocument.body.offsetHeight,
+                    iframeDocument.documentElement.clientHeight,
+                    iframeDocument.documentElement.scrollHeight,
+                    iframeDocument.documentElement.offsetHeight
+                );
+                this.style.height = (height + 50) + 'px';
+            } catch (e) {
+                console.log('No se pudo auto-redimensionar el iframe:', e);
+                this.style.height = '800px';
+            }
+        };
+    }
+    
+    // Refresh button functionality
+    const refreshBtn = document.getElementById('refresh-preview');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', function() {
+            iframe.src = iframe.src;
+            this.disabled = true;
+            setTimeout(() => { this.disabled = false; }, 2000);
+        });
+    }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,31 @@
+﻿version: '3.8'
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: azure_reports_postgres_dev
+    environment:
+      POSTGRES_DB: azure_reports_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    networks:
+      - dev-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: azure_reports_redis_dev
+    ports:
+      - "6379:6379"
+    networks:
+      - dev-network
+
+volumes:
+  postgres_dev_data:
+
+networks:
+  dev-network:
+    driver: bridge
