@@ -212,71 +212,65 @@ def generate_specialized_report(self, report_id):
         # Actualizar progreso
         self.update_state(state='PROGRESS', meta={'current': 60, 'total': 100, 'status': 'Generando HTML...'})
         
-        # Generar contenido HTML
-        html_content = generate_specialized_html(analysis_results, report)
+        # Generar HTML usando el generador corregido
+        from apps.reports.utils.specialized_html_generators import get_specialized_html_generator
+        generator = get_specialized_html_generator(report.report_type)
+        html_content = generator.generate_html(report, analysis_results, csv_data)
         
         # Actualizar progreso
         self.update_state(state='PROGRESS', meta={'current': 80, 'total': 100, 'status': 'Generando PDF...'})
         
         # Generar PDF
-        try:
-            from apps.storage.services.pdf_generator_service import generate_report_pdf
-            pdf_bytes, pdf_filename = generate_report_pdf(report, html_content)
-        except Exception as pdf_error:
-            logger.warning(f"Error generando PDF: {pdf_error}, continuando sin PDF")
-            pdf_bytes, pdf_filename = None, None
+        from apps.storage.services.pdf_generator_service import generate_report_pdf
+        pdf_bytes, pdf_filename = generate_report_pdf(report, html_content)
         
         # Actualizar progreso
-        self.update_state(state='PROGRESS', meta={'current': 90, 'total': 100, 'status': 'Guardando resultado...'})
+        self.update_state(state='PROGRESS', meta={'current': 90, 'total': 100, 'status': 'Subiendo archivos...'})
         
-        # Actualizar el reporte con los resultados
-        report.html_content = html_content
-        report.analysis_results = convert_to_json_serializable(analysis_results)
+        # Subir a Azure Storage con URLs permanentes
+        pdf_url, html_url = upload_report_files_to_azure_with_permanent_urls(
+            pdf_bytes, html_content, pdf_filename, report
+        )
         
-        if pdf_bytes:
-            # Guardar PDF si se generó exitosamente
-            try:
-                from apps.storage.services.file_storage_service import save_report_pdf
-                pdf_url = save_report_pdf(report, pdf_bytes, pdf_filename)
-                report.pdf_url = pdf_url
-                report.pdf_blob_name = pdf_filename
-            except Exception as save_error:
-                logger.warning(f"Error guardando PDF: {save_error}")
-        
-        # Marcar como completado
+        # Actualizar reporte con resultados finales
+        report.pdf_url = pdf_url
+        report.html_url = html_url
+        report.pdf_blob_name = f"reports/{pdf_filename}"
+        report.analysis_results = analysis_results
         report.status = 'completed'
         report.completed_at = timezone.now()
-        report.save(update_fields=['status', 'completed_at', 'html_content', 'analysis_results', 'pdf_url', 'pdf_blob_name'])
-        
-        logger.info(f"Reporte especializado completado: {report.id}")
+        report.save()
         
         # Actualizar progreso final
         self.update_state(state='SUCCESS', meta={
             'current': 100, 
             'total': 100, 
             'status': 'Completado',
-            'report_id': str(report.id),
-            'report_type': report.report_type
+            'pdf_url': pdf_url,
+            'html_url': html_url
         })
+        
+        logger.info(f"✅ Reporte especializado completado: {report.id}")
         
         return {
             'report_id': str(report.id),
             'report_type': report.report_type,
             'status': 'completed',
+            'pdf_url': pdf_url,
+            'html_url': html_url,
             'total_actions': analysis_results.get('total_actions', 0),
-            'estimated_savings': analysis_results.get('estimated_monthly_savings', 0)
+            'analysis_results': analysis_results
         }
         
     except Exception as e:
-        logger.error(f"Error en generación de reporte especializado: {e}", exc_info=True)
+        logger.error(f"Error en reporte especializado {report_id}: {e}", exc_info=True)
         
-        # Actualizar estado de error
         if report:
-            report.status = 'error'
+            report.status = 'failed'
             report.error_message = str(e)
             report.save(update_fields=['status', 'error_message'])
         
-        # Actualizar progreso de error
+        # Actualizar estado de fallo
         self.update_state(state='FAILURE', meta={
             'current': 100,
             'total': 100,
@@ -286,21 +280,71 @@ def generate_specialized_report(self, report_id):
         
         raise
 
-def perform_specialized_analysis(df, report_type):
-    """Realizar análisis especializado según el tipo de reporte"""
+def upload_report_files_to_azure_with_permanent_urls(pdf_bytes, html_content, pdf_filename, report):
+    """
+    Subir archivos a Azure Storage con URLs de larga duración (SAS tokens de 1 año)
+    """
     try:
-        if report_type == 'security':
-            return analyze_security_data(df)
-        elif report_type == 'performance':
-            return analyze_performance_data(df)
-        elif report_type == 'cost':
-            return analyze_cost_data(df)
-        else:
-            return analyze_comprehensive_data(df)
+        from apps.storage.services.enhanced_azure_storage import AzureStorageService
+        
+        storage_service = AzureStorageService()
+        
+        # Generar nombres únicos para los archivos
+        timestamp = timezone.now().strftime("%Y%m%d_%H%M%S")
+        pdf_blob_name = f"reports/{report.user.id}/{report.id}_{timestamp}.pdf"
+        html_blob_name = f"reports/{report.user.id}/{report.id}_{timestamp}.html"
+        
+        # Subir PDF
+        pdf_url = storage_service.upload_blob_with_long_sas(
+            blob_name=pdf_blob_name,
+            data=pdf_bytes,
+            content_type="application/pdf"
+        )
+        
+        # Subir HTML
+        html_url = storage_service.upload_blob_with_long_sas(
+            blob_name=html_blob_name,
+            data=html_content.encode('utf-8'),
+            content_type="text/html"
+        )
+        
+        logger.info(f"✅ Archivos subidos exitosamente - PDF: {pdf_blob_name}, HTML: {html_blob_name}")
+        
+        return pdf_url, html_url
+        
     except Exception as e:
-        logger.error(f"Error en análisis especializado: {e}")
-        return {'error': str(e)}
+        logger.error(f"Error subiendo archivos a Azure: {e}", exc_info=True)
+        raise
 
+def perform_specialized_analysis(csv_data, report_type):
+    """
+    Realizar análisis especializado basado en el tipo de reporte
+    """
+    try:
+        from apps.reports.utils.specialized_analyzers import get_specialized_analyzer
+        
+        analyzer = get_specialized_analyzer(report_type)
+        analysis_results = analyzer.analyze(csv_data)
+        
+        # Asegurar que tenemos la estructura básica
+        if 'total_actions' not in analysis_results:
+            analysis_results['total_actions'] = len(csv_data)
+        
+        if 'summary_stats' not in analysis_results:
+            analysis_results['summary_stats'] = {
+                'total_records': len(csv_data),
+                'processing_date': timezone.now().isoformat()
+            }
+        
+        logger.info(f"✅ Análisis {report_type} completado: {analysis_results.get('total_actions', 0)} acciones")
+        
+        return analysis_results
+        
+    except Exception as e:
+        logger.error(f"Error en análisis especializado {report_type}: {e}", exc_info=True)
+        raise
+
+    
 def analyze_security_data(df):
     """Análizar datos de seguridad"""
     security_data = df[df['Category'] == 'Security'] if 'Category' in df.columns else df

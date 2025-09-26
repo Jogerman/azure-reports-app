@@ -1,15 +1,11 @@
 # backend/apps/storage/services/enhanced_azure_storage.py
-import os
-import json
-import pandas as pd
-import logging
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, Union
 from django.conf import settings
 from django.utils import timezone
-import io
-import gzip
-import base64
+import os, json, logging, io, gzip, base64
+import pandas as pd
+
 
 try:
     from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient, generate_blob_sas, BlobSasPermissions
@@ -448,5 +444,136 @@ class EnhancedAzureStorageService:
                 'error': str(e)
             }
 
+    def upload_blob_with_long_sas(self, blob_name: str, data: Union[bytes, str], content_type: str = None) -> str:
+        """
+        Subir blob y generar URL con SAS token de larga duración (1 año)
+        NUEVO MÉTODO PARA REPORTES
+        """
+        if not self.is_available():
+            raise Exception("Azure Storage no está disponible")
+        
+        try:
+            # Convertir a bytes si es necesario
+            if isinstance(data, str):
+                data = data.encode('utf-8')
+            
+            # Determinar contenedor basado en el tipo de archivo
+            container_name = self.containers.get('pdfs', self.container_name)  # Por defecto PDFs
+            if blob_name.endswith('.html'):
+                container_name = self.containers.get('data', self.container_name)
+            
+            # Subir el blob
+            blob_client = self.blob_service_client.get_blob_client(
+                container=container_name,
+                blob=blob_name
+            )
+            
+            # Subir con content type específico
+            blob_client.upload_blob(
+                data,
+                overwrite=True,
+                content_settings={'content_type': content_type} if content_type else None
+            )
+            
+            # Generar SAS token de 1 año
+            from azure.storage.blob import generate_blob_sas, BlobSasPermissions
+            
+            sas_token = generate_blob_sas(
+                account_name=self.account_name,
+                container_name=container_name,
+                blob_name=blob_name,
+                account_key=self.account_key,
+                permission=BlobSasPermissions(read=True),
+                expiry=datetime.utcnow() + timedelta(days=365)  # 1 año
+            )
+            
+            # Construir URL completa
+            blob_url = f"https://{self.account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_token}"
+            
+            logger.info(f"✅ Blob subido con SAS de larga duración: {blob_name}")
+            return blob_url
+            
+        except Exception as e:
+            logger.error(f"Error subiendo blob {blob_name}: {e}", exc_info=True)
+            raise
+
+    def upload_report_files(self, pdf_bytes: bytes, html_content: str, pdf_filename: str, report) -> tuple:
+        """
+        Método específico para subir archivos de reportes con SAS de larga duración
+        NUEVO MÉTODO PARA REPORTES
+        """
+        try:
+            # Generar nombres únicos con estructura de carpetas
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            pdf_blob_name = f"reports/{report.user.id}/{report.id}_{timestamp}.pdf"
+            html_blob_name = f"reports/{report.user.id}/{report.id}_{timestamp}.html"
+            
+            # Subir PDF
+            pdf_url = self.upload_blob_with_long_sas(
+                blob_name=pdf_blob_name,
+                data=pdf_bytes,
+                content_type="application/pdf"
+            )
+            
+            # Subir HTML
+            html_url = self.upload_blob_with_long_sas(
+                blob_name=html_blob_name,
+                data=html_content,
+                content_type="text/html; charset=utf-8"
+            )
+            
+            logger.info(f"✅ Archivos de reporte subidos: PDF={pdf_blob_name}, HTML={html_blob_name}")
+            
+            return pdf_url, html_url
+            
+        except Exception as e:
+            logger.error(f"Error subiendo archivos de reporte: {e}", exc_info=True)
+            raise
+
+    def get_long_sas_url(self, blob_name: str, container_type: str = 'pdfs', expiry_days: int = 365) -> str:
+        """
+        Obtener URL con SAS token de larga duración para blob existente
+        NUEVO MÉTODO PARA REPORTES
+        """
+        if not self.is_available():
+            raise Exception("Azure Storage no está disponible")
+            
+        try:
+            container_name = self.containers.get(container_type, self.container_name)
+            
+            from azure.storage.blob import generate_blob_sas, BlobSasPermissions
+            
+            sas_token = generate_blob_sas(
+                account_name=self.account_name,
+                container_name=container_name,
+                blob_name=blob_name,
+                account_key=self.account_key,
+                permission=BlobSasPermissions(read=True),
+                expiry=datetime.utcnow() + timedelta(days=expiry_days)
+            )
+            
+            blob_url = f"https://{self.account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_token}"
+            return blob_url
+            
+        except Exception as e:
+            logger.error(f"Error generando URL SAS larga para {blob_name}: {e}", exc_info=True)
+            raise
+
 # Instancia global del servicio mejorado
 enhanced_azure_storage = EnhancedAzureStorageService()
+
+
+# TAMBIÉN AGREGAR ESTAS FUNCIONES DE COMPATIBILIDAD AL FINAL DEL ARCHIVO:
+
+def upload_report_files_to_azure(pdf_bytes, html_content, pdf_filename, report):
+    """
+    Función de compatibilidad para el sistema de reportes
+    """
+    return enhanced_azure_storage.upload_report_files(pdf_bytes, html_content, pdf_filename, report)
+
+def upload_report_files_to_azure_with_permanent_urls(pdf_bytes, html_content, pdf_filename, report):
+    """
+    Función de compatibilidad con nombre específico usado en tasks.py
+    """
+    return enhanced_azure_storage.upload_report_files(pdf_bytes, html_content, pdf_filename, report)
+

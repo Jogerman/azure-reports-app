@@ -32,13 +32,11 @@ app.conf.update(
     # Autodiscovery settings
     include=[
         'apps.reports.tasks',
-        'apps.storage.tasks',
     ],
     
     # Task routing
     task_routes={
         'apps.reports.tasks.*': {'queue': 'reports'},
-        'apps.storage.tasks.*': {'queue': 'storage'},
     },
 )
 
