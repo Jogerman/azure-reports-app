@@ -44,24 +44,44 @@ def test_generate_specialized_report():
         
         print(f"📄 CSV asociado: {test_report.csv_file.original_filename}")
         
-        # 6. Intentar ejecutar la función sincrónicamente (para debug)
-        print("\n🔄 Ejecutando función directamente (sincrónicamente)...")
+        # 6. Intentar ejecutar la función usando el método correcto
+        print("\n🔄 Ejecutando función usando apply() (sincrónicamente)...")
         
-        # Crear una instancia mock del self para probar
-        class MockTask:
-            def update_state(self, state, meta):
-                print(f"   📊 Progreso: {meta.get('current', 0)}% - {meta.get('status', 'Sin estado')}")
+        try:
+            # Ejecutar función usando apply() que maneja bind=True correctamente
+            result = generate_specialized_report.apply(args=[str(test_report.id)])
+            print(f"   ✅ Función ejecutada sin errores de sintaxis")
+        except Exception as apply_error:
+            print(f"   ❌ Error en apply(): {apply_error}")
+            # Intentar método alternativo
+            print("   🔄 Intentando método alternativo...")
+            
+            try:
+                # Crear tarea directamente con los argumentos correctos
+                from apps.reports.tasks import generate_specialized_report as orig_func
+                
+                # Llamar la función interna directamente
+                result_data = orig_func.__wrapped__(None, str(test_report.id))
+                
+                # Simular resultado de apply()
+                class MockResult:
+                    def __init__(self, data):
+                        self.result = data
+                    def failed(self):
+                        return False
+                
+                result = MockResult(result_data)
+                print("   ✅ Método alternativo funcionó")
+                
+            except Exception as alt_error:
+                print(f"   ❌ Error en método alternativo: {alt_error}")
+                raise alt_error
         
-        mock_task = MockTask()
-        
-        # Ejecutar función
-        result = generate_specialized_report(mock_task, str(test_report.id))
-        
-        if result and result.get('status') == 'completed':
+        if result and result.result and result.result.get('status') == 'completed':
             print(f"🎉 FUNCIÓN EJECUTADA EXITOSAMENTE!")
-            print(f"   📋 Report ID: {result['report_id']}")
-            print(f"   📊 Tipo: {result['report_type']}")
-            print(f"   📈 Total acciones: {result['total_actions']}")
+            print(f"   📋 Report ID: {result.result['report_id']}")
+            print(f"   📊 Tipo: {result.result['report_type']}")
+            print(f"   📈 Total acciones: {result.result['total_actions']}")
             
             # Verificar que el reporte se actualizó
             test_report.refresh_from_db()
@@ -73,6 +93,9 @@ def test_generate_specialized_report():
                 print(f"   🌐 HTML URL generada: ✅")
             
             return True
+        elif result and result.failed():
+            print(f"❌ Función falló: {result.traceback}")
+            return False
         else:
             print(f"❌ Función ejecutada pero resultado no esperado: {result}")
             return False
