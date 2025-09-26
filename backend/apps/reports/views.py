@@ -4,28 +4,25 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.views import APIView
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework import status, viewsets, permissions
+from rest_framework import status, viewsets, permissions,serializers
 from rest_framework.permissions import IsAuthenticated
 from django.http import HttpResponse
 from django.utils import timezone
 from django.db.models import Q
 from django.template.loader import render_to_string
-from rest_framework import serializers
 from .models import CSVFile, Report
 from typing import Optional, Dict, Any, Tuple
-import logging
-import json
-import pandas as pd
-import tempfile
-import os
 from datetime import datetime, timedelta
-
-from .models import Report, CSVFile
 from .serializers import ReportSerializer
 from apps.reports.utils.enhanced_analyzer import EnhancedHTMLReportGenerator
 from .utils.cache_manager import ReportCacheManager
 from .utils.specialized_analyzers import get_specialized_analyzer
 from .utils.specialized_html_generators import get_specialized_html_generator
+import logging
+import json
+import pandas as pd
+import tempfile
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -120,12 +117,19 @@ class ReportViewSet(viewsets.ModelViewSet):
             # Validar que el archivo CSV existe y pertenece al usuario
             csv_file_id = request.data.get('csv_file')
             try:
-                from apps.storage.models import CSVFile
                 csv_file = CSVFile.objects.get(id=csv_file_id, user=request.user)
+                logger.info(f"CSV file encontrado: {csv_file.original_filename}")
             except CSVFile.DoesNotExist:
+                logger.error(f"CSV file no encontrado: {csv_file_id} para usuario {request.user.email}")
                 return Response(
                     {'error': 'Archivo CSV no encontrado o no pertenece al usuario'}, 
                     status=status.HTTP_404_NOT_FOUND
+                )
+            except Exception as csv_error:
+                logger.error(f"Error buscando CSV file: {csv_error}")
+                return Response(
+                    {'error': f'Error accediendo al archivo CSV: {str(csv_error)}'}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
             
             # Crear el reporte
