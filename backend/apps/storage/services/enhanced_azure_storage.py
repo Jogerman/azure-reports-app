@@ -8,7 +8,7 @@ import pandas as pd
 
 
 try:
-    from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient, generate_blob_sas, BlobSasPermissions
+    from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient, generate_blob_sas, BlobSasPermissions, ContentSettings
     from azure.identity import DefaultAzureCredential
     from azure.core.exceptions import AzureError
     AZURE_AVAILABLE = True
@@ -447,7 +447,7 @@ class EnhancedAzureStorageService:
     def upload_blob_with_long_sas(self, blob_name: str, data: Union[bytes, str], content_type: str = None) -> str:
         """
         Subir blob y generar URL con SAS token de larga duración (1 año)
-        NUEVO MÉTODO PARA REPORTES
+        VERSIÓN CORREGIDA - Arregla el error de content_settings
         """
         if not self.is_available():
             raise Exception("Azure Storage no está disponible")
@@ -468,11 +468,16 @@ class EnhancedAzureStorageService:
                 blob=blob_name
             )
             
-            # Subir con content type específico
+            # ✅ CORRECCIÓN: Usar ContentSettings object en lugar de dict
+            content_settings_obj = None
+            if content_type:
+                content_settings_obj = ContentSettings(content_type=content_type)
+            
+            # Subir con content settings correcto
             blob_client.upload_blob(
                 data,
                 overwrite=True,
-                content_settings={'content_type': content_type} if content_type else None
+                content_settings=content_settings_obj  # ✅ Usar objeto, no dict
             )
             
             # Generar SAS token de 1 año

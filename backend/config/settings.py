@@ -298,7 +298,7 @@ if sys.platform.startswith('win'):
     CELERY_WORKER_LOG_COLOR = False
     
     # Evitar problemas con procesos en Windows
-    CELERY_TASK_ALWAYS_EAGER = False  # Cambiar a True solo para debugging
+    CELERY_TASK_ALWAYS_EAGER = True  # Cambiar a True solo para debugging
     CELERY_TASK_STORE_EAGER_RESULT = True
     
     # Configuración del broker para Windows
